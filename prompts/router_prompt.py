@@ -1,7 +1,7 @@
-from persona_prompt import PERSONA_SISTEMA
+from prompts.persona_prompt import SYSTEM_PERSON
 
 ROUTER_PROMPT = f"""
-{PERSONA_SISTEMA}
+{SYSTEM_PERSON}
 
 
 ### PAPEL
