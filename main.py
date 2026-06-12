@@ -217,7 +217,6 @@ def executar_fluxo(pergunta_usuario: str, session_id: str) -> str:
         config={"configurable": {"thread_id": session_id}},
     )
 
-    print(f"[debug] agentes chamados: {estado_final['agentes_chamados']}")
     return estado_final["resposta_final"]
 
 # PROCESSO DE PERGUNTAS E RESPOSTAS ATÉ QUE O USUÁRIO ENCERRE O CHAT
