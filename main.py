@@ -1,24 +1,18 @@
 # Imports
 import os
 import operator
-from typing import Annotated, TypedDict
-from langgraph.graph import StateGraph, END
-from faq_tools import faq_retriever
+from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langchain.agents import create_agent
 from langgraph.checkpoint.memory import MemorySaver # -> Substitui a função que tínhamos criado para histórico com sessões, porque faz isso automaticamente
-from langchain_groq import ChatGroq
-from pg_tools import TOOLS
-from dotenv import load_dotenv
-from prompts import (
-   ROUTER_PROMPT_COMPLETO,
-   FINANCEIRO_PROMPT_COMPLETO,
-   AGENDA_PROMPT_COMPLETO,
-   ORQUESTRADOR_PROMPT_COMPLETO,
-   FAQ_PROMPT
-)
-from guardrail import guardrail_entrada, guardrail_saida, anonimizar_entrada, desanonimizar_saida
 from langchain_core.messages import RemoveMessage
+from typing import Annotated, TypedDict
+from langgraph.graph import StateGraph, END
+from prompts.prompts import PROMPTS
+from tools.pg_tools import TOOLS
+from tools.faq_tools import faq_retriever
+
 
 # Carregando variáveis de ambiente
 load_dotenv()
@@ -52,30 +46,30 @@ router_memory = MemorySaver()
 
 router_app = create_agent(
    model=llm_rapido,
-   system_prompt=ROUTER_PROMPT_COMPLETO,
+   system_prompt=PROMPTS["router"],
    checkpointer=router_memory
 )
 
 financeiro_app = create_agent(
    model=llm_especialista,
-   system_prompt=FINANCEIRO_PROMPT_COMPLETO,
+   system_prompt=PROMPTS["financial"],
    tools=TOOLS
 )
 
 agenda_app = create_agent(
    model=llm_especialista,
-   system_prompt=AGENDA_PROMPT_COMPLETO
+   system_prompt=PROMPTS["schedule"]
 )
 
 faq_app = create_agent(
     model=llm_rapido,
-    system_prompt=FAQ_PROMPT,
+    system_prompt=PROMPTS["faq"],
     tools=[faq_retriever]
 )
 
 orquestrador_app = create_agent(
    model=llm_rapido,
-   system_prompt=ORQUESTRADOR_PROMPT_COMPLETO
+   system_prompt=PROMPTS["orchestrator"]
 )
 
 # ==============================================================================
@@ -234,7 +228,7 @@ while True:
        break
     try:
        resposta = executar_fluxo(
-           input=user_input,
+           pergunta_usuario=user_input,
            session_id="Não importa agora"
        )
 

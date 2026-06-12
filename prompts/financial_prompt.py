@@ -1,4 +1,4 @@
-from persona_prompt import SYSTEM_PERSON
+from prompts.persona_prompt import SYSTEM_PERSON
 
 FINANCIAL_PROMPT = f"""
 {SYSTEM_PERSON}
