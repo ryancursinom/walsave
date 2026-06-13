@@ -7,12 +7,11 @@ from langchain_groq import ChatGroq
 from langchain.agents import create_agent
 from langgraph.checkpoint.memory import MemorySaver # -> Substitui a função que tínhamos criado para histórico com sessões, porque faz isso automaticamente
 from langchain_core.messages import RemoveMessage
-from typing import Annotated, TypedDict
-from langgraph.graph import StateGraph, END
+from typing import Annotated
+from langgraph.graph import StateGraph, MessagesState, END
 from prompts.prompts import PROMPTS
 from tools.pg_tools import TOOLS
 from tools.faq_tools import faq_retriever
-
 
 # Carregando variáveis de ambiente
 load_dotenv()
@@ -75,80 +74,52 @@ orquestrador_app = create_agent(
 # ==============================================================================
 # ESTADO
 # ==============================================================================
-class Estado(TypedDict):
-    input:              str                                  # sobrescrito a cada etapa
-    session_id:         str                                  # ID da sessão
-    agentes_chamados:   Annotated[list[str], operator.add]  # acumula entre nós
-    saida_especialista: str                                  # JSON do especialista ativo
-    resposta_final:     str                                  # resposta para o usuário
+class Estado(MessagesState):
+    agentes_chamados: Annotated[list[str], operator.add]
+    rota: str
 
 
 # ==============================================================================
 # NÓS
 # ==============================================================================
 def no_roteador(estado: Estado) -> dict:
-    saida = router_app.invoke(
-        {"messages": [{"role": "human", "content": estado["input"]}]},
-        config={"configurable": {"thread_id": estado["session_id"]}},
-    )
+    saida = router_app.invoke({"messages": list(estado["messages"])})
     texto = saida["messages"][-1].text
 
-    # Resposta direta (saudação, fora de escopo): já escreve no campo final
-    if not texto.strip().startswith("ROUTE="):
+    if "ROUTE=" not in texto:
         return {
             "agentes_chamados": ["roteador"],
-            "resposta_final":   texto,
+            "rota":             "fim",
+            "messages":         [{"role": "assistant", "content": texto}],
         }
 
-    # Encaminhamento: sobrescreve input com o protocolo para o especialista
+    rota = "fim"
+    for linha in texto.splitlines():
+        if linha.startswith("ROUTE="):
+            rota = linha.split("=", 1)[1].strip()
+            break
+
     return {
-        "input":            texto,
-        "agentes_chamados": ["roteador"],
+        "agentes_chamados": ["roteador", rota],
+        "rota":             rota,
+        # Histórico limpo: o especialista vai ler só a conversa real
     }
-
-
-def no_financeiro(estado: Estado) -> dict:
-    saida = financeiro_app.invoke(
-        {"messages": [{"role": "human", "content": estado["input"]}]},
-        config={"configurable": {"thread_id": {estado['session_id']}}},
-    )
-    return {
-        "saida_especialista": saida["messages"][-1].text,
-        "agentes_chamados":   ["financeiro"],
-    }
-
-
-def no_agenda(estado: Estado) -> dict:
-    saida = agenda_app.invoke(
-        {"messages": [{"role": "human", "content": estado["input"]}]},
-        config={"configurable": {"thread_id": {estado['session_id']}}},
-    )
-    return {
-        "saida_especialista": saida["messages"][-1].text,
-        "agentes_chamados":   ["agenda"],
-    }
-
-
-def no_faq(estado: Estado) -> dict:
-    saida = faq_app.invoke(
-        {"messages": [{"role": "human", "content": estado["input"]}]},
-        config={"configurable": {"thread_id": {estado['session_id']}}},
-    )
-    return {
-        "saida_especialista": saida["messages"][-1].text,
-        "resposta_final":     saida["messages"][-1].text,  # bypassa o orquestrador
-        "agentes_chamados":   ["faq"],
-    }
-
 
 def no_orquestrador(estado: Estado) -> dict:
-    saida = orquestrador_app.invoke(
-        {"messages": [{"role": "human", "content": estado["saida_especialista"]}]},
-        config={"configurable": {"thread_id": {estado['session_id']}}},
-    )
+    # Pega a última resposta do especialista (última AIMessage com conteúdo)
+    ultima_especialista = ""
+    for mensagem in reversed(estado["messages"]):
+        if mensagem.type == "ai" and mensagem.content:
+            ultima_especialista = mensagem.content
+            break
+    
+    saida = orquestrador_app.invoke({
+        "messages": {"role": "human", "content": ultima_especialista}
+    })
+
     return {
-        "resposta_final":   saida["messages"][-1].text,
         "agentes_chamados": ["orquestrador"],
+        "messages":        [{"role": "assistant", "content": saida["messages"][-1].text}]
     }
 
 
@@ -156,14 +127,7 @@ def no_orquestrador(estado: Estado) -> dict:
 # FUNÇÃO DE DECISÃO
 # ==============================================================================
 def decidir_especialista(estado: Estado) -> str:
-    """Lê o protocolo do roteador e devolve o nome do próximo nó."""
-    texto = estado["input"].strip()
-
-    if not texto.startswith("ROUTE="):
-        return "fim"   # resposta direta já foi escrita no nó do roteador
-
-    rota = texto.split("\n", 1)[0].split("=", 1)[1].strip()
-    return rota if rota in ("financeiro", "agenda", "faq") else "fim"
+    return estado["rota"] if estado["rota"] in ("financeiro", "agenda", "faq") else "fim"
 
 
 # ==============================================================================
@@ -172,9 +136,8 @@ def decidir_especialista(estado: Estado) -> str:
 grafo = StateGraph(Estado)
 
 grafo.add_node("roteador",     no_roteador)
-grafo.add_node("financeiro",   no_financeiro)
-grafo.add_node("agenda",       no_agenda)
-grafo.add_node("faq",          no_faq)
+grafo.add_node("financeiro", financeiro_app)
+grafo.add_node("faq", faq_app)
 grafo.add_node("orquestrador", no_orquestrador)
 
 grafo.set_entry_point("roteador")
@@ -184,14 +147,12 @@ grafo.add_conditional_edges(
     decidir_especialista,
     {
         "financeiro": "financeiro",
-        "agenda":     "agenda",
         "faq":        "faq",
         "fim":        END,       # resposta direta: sem especialista nem orquestrador
     },
 )
 
-grafo.add_edge("financeiro",   "orquestrador")
-grafo.add_edge("agenda",       "orquestrador")
+grafo.add_edge("financeiro","orquestrador")
 grafo.add_edge("orquestrador", END)
 grafo.add_edge("faq",          END)   # FAQ bypassa o orquestrador
 
@@ -205,11 +166,9 @@ fluxo_agentes = grafo.compile(checkpointer=memory)
 # ==============================================================================
 def executar_fluxo(pergunta_usuario: str, session_id: str) -> str:
     estado_inicial = {
-        "input":              pergunta_usuario,
-        "session_id":         session_id,
-        "agentes_chamados":   [],
-        "saida_especialista": "",
-        "resposta_final":     "",
+        "messages": [{"role": "human", "content": pergunta_usuario}],
+        "agentes_chamados": [],
+        "rota": "",
     }
 
     estado_final = fluxo_agentes.invoke(
@@ -217,7 +176,8 @@ def executar_fluxo(pergunta_usuario: str, session_id: str) -> str:
         config={"configurable": {"thread_id": session_id}},
     )
 
-    return estado_final["resposta_final"]
+    print(f"[debug] agentes chamados: {estado_final['agentes_chamados']}")
+    return estado_final["messages"][-1].text
 
 # PROCESSO DE PERGUNTAS E RESPOSTAS ATÉ QUE O USUÁRIO ENCERRE O CHAT
 while True:
