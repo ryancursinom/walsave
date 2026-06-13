@@ -441,7 +441,6 @@ def search_transactions(
 ) -> dict:
     """
     Use quando o usuário quiser consultar, listar ou analisar transações passadas.
-    Exemplos: 'quanto gastei com uber esse mês?', 'minhas últimas compras no crédito', 'mostre meus gastos de janeiro'.
     Não use para obter o saldo total — prefira total_balance para isso.
 
     As informações devem vir na seguinte ordem:
