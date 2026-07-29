@@ -12,6 +12,9 @@ from langgraph.graph import StateGraph, MessagesState, END
 from prompts.prompts import PROMPTS
 from tools.pg_tools import TOOLS
 from tools.faq_tools import faq_retriever
+from guardrail.guardrail import guardrail_entrada, guardrail_saida, anonimizar_entrada
+from memory.memory_mongodb import iniciar_sessao, salvar_mensagem, encerrar_sessao
+from tools.mongodb_tools import TOOLS_MEMORIA
 
 # Carregando variáveis de ambiente
 load_dotenv()
@@ -46,13 +49,17 @@ router_memory = MemorySaver()
 router_app = create_agent(
    model=llm_rapido,
    system_prompt=PROMPTS["router"],
-   checkpointer=router_memory
+   checkpointer=router_memory,
+   tools=TOOLS_MEMORIA
 )
 
 financeiro_app = create_agent(
    model=llm_especialista,
    system_prompt=PROMPTS["financial"],
-   tools=TOOLS
+   tools=[
+       *TOOLS,
+       *TOOLS_MEMORIA
+    ]
 )
 
 agenda_app = create_agent(
@@ -63,7 +70,10 @@ agenda_app = create_agent(
 faq_app = create_agent(
     model=llm_rapido,
     system_prompt=PROMPTS["faq"],
-    tools=[faq_retriever]
+    tools=[
+        faq_retriever,
+        *TOOLS_MEMORIA
+    ]
 )
 
 orquestrador_app = create_agent(
@@ -77,16 +87,49 @@ orquestrador_app = create_agent(
 class Estado(MessagesState):
     agentes_chamados: Annotated[list[str], operator.add]
     rota: str
+    mapa_pii: dict
+    session_id: str
 
 
 # ==============================================================================
 # NÓS
 # ==============================================================================
+
+def no_guardrail_entrada(estado: Estado) -> dict:
+    human_message = list(estado["messages"])[-1]
+
+    texto_anonimizado, mapa = anonimizar_entrada(human_message.text)
+
+    resultado = guardrail_entrada(texto_anonimizado)
+    salvar_mensagem(estado["session_id"], "human", texto_anonimizado)
+
+    if resultado["bloqueado"]:
+        salvar_mensagem(estado["session_id"], "assistant", resultado["mensagem"])
+
+        return {
+            "messages": [{"role": "assistant", "content": resultado["mensagem"]}],
+            "rota": "fim",
+            "mapa_pii": {},
+            "agentes_chamados": [f"guardrail_entrada: {resultado['motivo']}"],
+        }
+    
+    return {
+        "messages": [
+            RemoveMessage(id=human_message.id),  # Remove a mensagem original do usuário
+            {"role": "human", "content": texto_anonimizado}
+        ],
+        "mapa_pii": mapa,
+        "agentes_chamados": ["guardrail_entrada"],
+        "rota": "roteador",
+    }
+
 def no_roteador(estado: Estado) -> dict:
     saida = router_app.invoke({"messages": list(estado["messages"])})
     texto = saida["messages"][-1].text
 
     if "ROUTE=" not in texto:
+        salvar_mensagem(estado["session_id"], "assistant", texto)
+
         return {
             "agentes_chamados": ["roteador"],
             "rota":             "fim",
@@ -106,7 +149,6 @@ def no_roteador(estado: Estado) -> dict:
     }
 
 def no_orquestrador(estado: Estado) -> dict:
-    # Pega a última resposta do especialista (última AIMessage com conteúdo)
     ultima_especialista = ""
     for mensagem in reversed(estado["messages"]):
         if mensagem.type == "ai" and mensagem.content:
@@ -119,7 +161,21 @@ def no_orquestrador(estado: Estado) -> dict:
 
     return {
         "agentes_chamados": ["orquestrador"],
-        "messages":        [{"role": "assistant", "content": saida["messages"][-1].text}]
+        "messages":        [{"role": "assistant", "content": saida["messages"][-1].text}],
+    }
+
+def no_guardrail_saida(estado: Estado) -> dict:
+    ultima_resposta = list(estado["messages"])[-1] 
+
+    resposta_final = guardrail_saida(ultima_resposta.text, estado["mapa_pii"])
+
+    salvar_mensagem(estado["session_id"], "assistant", resposta_final["conteudo"])
+    return {
+        "agentes_chamados": ["guardrail_saida"],
+        "messages": [
+            RemoveMessage(id=ultima_resposta.id),
+            {"role": "assistant", "content": resposta_final["conteudo"]}
+        ],
     }
 
 
@@ -129,18 +185,31 @@ def no_orquestrador(estado: Estado) -> dict:
 def decidir_especialista(estado: Estado) -> str:
     return estado["rota"] if estado["rota"] in ("financeiro", "agenda", "faq") else "fim"
 
+def decidir_pos_guardrail_entrada(estado: Estado) -> str:
+    return estado["rota"]
 
 # ==============================================================================
 # CONSTRUÇÃO DO GRAFO
 # ==============================================================================
 grafo = StateGraph(Estado)
 
+grafo.add_node("guardrail_entrada", no_guardrail_entrada)
 grafo.add_node("roteador",     no_roteador)
 grafo.add_node("financeiro", financeiro_app)
 grafo.add_node("faq", faq_app)
 grafo.add_node("orquestrador", no_orquestrador)
+grafo.add_node("guardrail_saida", no_guardrail_saida)
 
-grafo.set_entry_point("roteador")
+grafo.set_entry_point("guardrail_entrada")
+
+grafo.add_conditional_edges(
+    "guardrail_entrada",
+    decidir_pos_guardrail_entrada,
+    {
+        "roteador": "roteador",
+        "fim": END,
+    }
+)
 
 grafo.add_conditional_edges(
     "roteador",
@@ -153,7 +222,8 @@ grafo.add_conditional_edges(
 )
 
 grafo.add_edge("financeiro","orquestrador")
-grafo.add_edge("orquestrador", END)
+grafo.add_edge("orquestrador", "guardrail_saida")
+grafo.add_edge("guardrail_saida", END)
 grafo.add_edge("faq",          END)   # FAQ bypassa o orquestrador
 
 # Memória centralizada no grafo — persiste o Estado inteiro entre turns
@@ -169,6 +239,8 @@ def executar_fluxo(pergunta_usuario: str, session_id: str) -> str:
         "messages": [{"role": "human", "content": pergunta_usuario}],
         "agentes_chamados": [],
         "rota": "",
+        "mapa_pii": {},
+        "session_id": session_id
     }
 
     estado_final = fluxo_agentes.invoke(
@@ -176,21 +248,33 @@ def executar_fluxo(pergunta_usuario: str, session_id: str) -> str:
         config={"configurable": {"thread_id": session_id}},
     )
 
-    print(f"[debug] agentes chamados: {estado_final['agentes_chamados']}")
+    print(estado_final)
     return estado_final["messages"][-1].text
 
 # PROCESSO DE PERGUNTAS E RESPOSTAS ATÉ QUE O USUÁRIO ENCERRE O CHAT
-while True:
-    user_input = input("👥 ")
-    if user_input.lower() in ('sair', 'end', 'fim', 'tchau', 'bye'):
-       print("Encerrando a conversa.")
-       break
-    try:
-       resposta = executar_fluxo(
-           pergunta_usuario=user_input,
-           session_id="Não importa agora"
-       )
+session_id = "12345"
+iniciar_sessao(session_id=session_id)
 
-       print(resposta)
-    except Exception as e:
-       print("Erro ao consumir a API:", e)
+try:
+    while True:
+        user_input = input("👥 ")
+        if user_input.lower() in ('sair', 'end', 'fim', 'tchau', 'bye'):
+            print("Encerrando a conversa.")
+            raise SystemExit(0)
+        try:
+            resposta = executar_fluxo(
+                pergunta_usuario=user_input,
+                session_id=session_id
+            )
+
+            print(resposta)
+        except Exception as e:
+            print("Erro ao consumir a API:", e)
+
+except KeyboardInterrupt:
+    print("Sessão encerrada pelo usuário!")
+
+finally:
+    resumo = encerrar_sessao(session_id=session_id)
+    print("=== RESUMO DA SESSÃO ===\n")
+    print(resumo)
