@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 from langchain.tools import tool
 from langchain_community.document_loaders import PyPDFLoader
@@ -8,7 +9,9 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 load_dotenv()
 
-PDF_PATH = os.getenv("FAQ_PDF_PATH","WalSave_Seu_Parceiro_para_Finanças_e_Compromissos.pdf")
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+PDF_PATH = os.getenv("FAQ_PDF_PATH", BASE_DIR / "docs" / "WalSave_Seu_Parceiro_para_Finanças_e_Compromissos.pdf")
 loader = PyPDFLoader(PDF_PATH)
 docs = loader.load()
 

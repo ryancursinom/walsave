@@ -1,8 +1,8 @@
-from faq_prompt import FAQ_PROMPT
-from router_prompt import COMPLETE_ROUTER_PROMPT
-from financial_prompt import COMPLETE_FINANCIAL_PROMPT
-from schedule_prompt import COMPLETE_SCHEDULE_PROMPT
-from orchestrator_prompt import COMPLETE_ORCHESTRATOR_PROMPT
+from prompts.faq_prompt import FAQ_PROMPT
+from prompts.router_prompt import COMPLETE_ROUTER_PROMPT
+from prompts.financial_prompt import COMPLETE_FINANCIAL_PROMPT
+from prompts.schedule_prompt import COMPLETE_SCHEDULE_PROMPT
+from prompts.orchestrator_prompt import COMPLETE_ORCHESTRATOR_PROMPT
 
 PROMPTS = {
     "faq": FAQ_PROMPT,
