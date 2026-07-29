@@ -102,12 +102,13 @@ CATEGORIA: [categoria]
 JUSTIFICATIVA: [uma linha]
 
 Categorias:
-APROVADO        - mensagem legítima sobre finanças (informativa), agenda ou operações
-OFENSIVO        - xingamentos, assédio, discurso de ódio
-PERIGOSO        - instruções que causam dano físico, psicológico ou coletivo
-ILICITO         - pedido de auxílio para atividades ilegais ou fraudulentas
-POLITICO        - opiniões ou debates políticos, partidos, eleições
+APROVADO         - mensagem legítima sobre finanças (informativa), agenda ou operações
+OFENSIVO         - xingamentos, assédio, discurso de ódio
+PERIGOSO         - instruções que causam dano físico, psicológico ou coletivo
+ILICITO          - pedido de auxílio para atividades ilegais ou fraudulentas
+POLITICO         - opiniões ou debates políticos, partidos, eleições
 INDICACAO_INVEST - recomendação direta de ativo específico para comprar/vender/manter
+DADOS_INTERNOS   - solicita informações internas do sistema, como chaves de API, banco de dados, ou detalhamentos internos
 
 Mensagem: {mensagem}
 """
@@ -118,6 +119,7 @@ _RESPOSTAS_BLOQUEIO = {
     "ILICITO":          ("pedido_ilicito",           "Não posso auxiliar com atividades ilegais ou irregulares."),
     "POLITICO":         ("pergunta_politica",        "Não me envolvo em temas políticos. Posso ajudar com finanças ou sua agenda."),
     "INDICACAO_INVEST": ("indicacao_investimento",   "Por regulação, não forneço indicações diretas de ativos. Posso explicar classes de investimento ou agendar uma reunião com seu assessor."),
+    "DADOS_INTERNOS":    ("dados_internos",         "Não forneço informações internas do sistema")
 }
 
 def guardrail_entrada(mensagem_anonimizada):

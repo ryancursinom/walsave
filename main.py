@@ -13,6 +13,8 @@ from prompts.prompts import PROMPTS
 from tools.pg_tools import TOOLS
 from tools.faq_tools import faq_retriever
 from guardrail.guardrail import guardrail_entrada, guardrail_saida, anonimizar_entrada
+from memory.memory_mongodb import iniciar_sessao, salvar_mensagem, encerrar_sessao
+from tools.mongodb_tools import TOOLS_MEMORIA
 
 # Carregando variáveis de ambiente
 load_dotenv()
@@ -47,13 +49,17 @@ router_memory = MemorySaver()
 router_app = create_agent(
    model=llm_rapido,
    system_prompt=PROMPTS["router"],
-   checkpointer=router_memory
+   checkpointer=router_memory,
+   tools=TOOLS_MEMORIA
 )
 
 financeiro_app = create_agent(
    model=llm_especialista,
    system_prompt=PROMPTS["financial"],
-   tools=TOOLS
+   tools=[
+       *TOOLS,
+       *TOOLS_MEMORIA
+    ]
 )
 
 agenda_app = create_agent(
@@ -64,7 +70,10 @@ agenda_app = create_agent(
 faq_app = create_agent(
     model=llm_rapido,
     system_prompt=PROMPTS["faq"],
-    tools=[faq_retriever]
+    tools=[
+        faq_retriever,
+        *TOOLS_MEMORIA
+    ]
 )
 
 orquestrador_app = create_agent(
@@ -79,6 +88,7 @@ class Estado(MessagesState):
     agentes_chamados: Annotated[list[str], operator.add]
     rota: str
     mapa_pii: dict
+    session_id: str
 
 
 # ==============================================================================
@@ -91,8 +101,11 @@ def no_guardrail_entrada(estado: Estado) -> dict:
     texto_anonimizado, mapa = anonimizar_entrada(human_message.text)
 
     resultado = guardrail_entrada(texto_anonimizado)
+    salvar_mensagem(estado["session_id"], "human", texto_anonimizado)
 
     if resultado["bloqueado"]:
+        salvar_mensagem(estado["session_id"], "assistant", resultado["mensagem"])
+
         return {
             "messages": [{"role": "assistant", "content": resultado["mensagem"]}],
             "rota": "fim",
@@ -115,6 +128,8 @@ def no_roteador(estado: Estado) -> dict:
     texto = saida["messages"][-1].text
 
     if "ROUTE=" not in texto:
+        salvar_mensagem(estado["session_id"], "assistant", texto)
+
         return {
             "agentes_chamados": ["roteador"],
             "rota":             "fim",
@@ -150,17 +165,11 @@ def no_orquestrador(estado: Estado) -> dict:
     }
 
 def no_guardrail_saida(estado: Estado) -> dict:
-    ultima_resposta = list(estado["messages"])[-1]
-    print(ultima_resposta.text)    
-    # for mensagem in reversed(estado["messages"]):
-    #     if mensagem.type == "ai" and mensagem.content:
-    #         ultima_resposta = mensagem.content
-    #         ultima_resposta_id = mensagem.id
-    #         print(mensagem.content)
-    #         break
+    ultima_resposta = list(estado["messages"])[-1] 
 
     resposta_final = guardrail_saida(ultima_resposta.text, estado["mapa_pii"])
 
+    salvar_mensagem(estado["session_id"], "assistant", resposta_final["conteudo"])
     return {
         "agentes_chamados": ["guardrail_saida"],
         "messages": [
@@ -231,6 +240,7 @@ def executar_fluxo(pergunta_usuario: str, session_id: str) -> str:
         "agentes_chamados": [],
         "rota": "",
         "mapa_pii": {},
+        "session_id": session_id
     }
 
     estado_final = fluxo_agentes.invoke(
@@ -242,17 +252,29 @@ def executar_fluxo(pergunta_usuario: str, session_id: str) -> str:
     return estado_final["messages"][-1].text
 
 # PROCESSO DE PERGUNTAS E RESPOSTAS ATÉ QUE O USUÁRIO ENCERRE O CHAT
-while True:
-    user_input = input("👥 ")
-    if user_input.lower() in ('sair', 'end', 'fim', 'tchau', 'bye'):
-       print("Encerrando a conversa.")
-       break
-    try:
-       resposta = executar_fluxo(
-           pergunta_usuario=user_input,
-           session_id="Não importa agora"
-       )
+session_id = "12345"
+iniciar_sessao(session_id=session_id)
 
-       print(resposta)
-    except Exception as e:
-       print("Erro ao consumir a API:", e)
+try:
+    while True:
+        user_input = input("👥 ")
+        if user_input.lower() in ('sair', 'end', 'fim', 'tchau', 'bye'):
+            print("Encerrando a conversa.")
+            raise SystemExit(0)
+        try:
+            resposta = executar_fluxo(
+                pergunta_usuario=user_input,
+                session_id=session_id
+            )
+
+            print(resposta)
+        except Exception as e:
+            print("Erro ao consumir a API:", e)
+
+except KeyboardInterrupt:
+    print("Sessão encerrada pelo usuário!")
+
+finally:
+    resumo = encerrar_sessao(session_id=session_id)
+    print("=== RESUMO DA SESSÃO ===\n")
+    print(resumo)
