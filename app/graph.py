@@ -10,11 +10,11 @@ from langchain_core.messages import RemoveMessage
 from typing import Annotated
 from langgraph.graph import StateGraph, MessagesState, END
 from prompts.prompts import PROMPTS
-from tools.pg_tools import TOOLS
-from tools.faq_tools import faq_retriever
-from guardrail.guardrail import guardrail_entrada, guardrail_saida, anonimizar_entrada
-from memory.memory_mongodb import iniciar_sessao, salvar_mensagem, encerrar_sessao
-from tools.mongodb_tools import TOOLS_MEMORIA
+from app.tools.financial_tools import TOOLS
+from app.tools.faq_tools import faq_retriever
+from app.guardrail import guardrail_entrada, guardrail_saida, anonimizar_entrada
+from app.memory_mongodb import iniciar_sessao, salvar_mensagem, encerrar_sessao
+from app.tools.mongodb_tools import TOOLS_MEMORIA
 
 # Carregando variáveis de ambiente
 load_dotenv()

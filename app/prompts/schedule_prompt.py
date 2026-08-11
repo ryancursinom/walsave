@@ -1,4 +1,4 @@
-from prompts.persona_prompt import SYSTEM_PERSON
+from app.prompts.persona_prompt import SYSTEM_PERSON
 
 SCHEDULE_PROMPT = f"""
 {SYSTEM_PERSON}

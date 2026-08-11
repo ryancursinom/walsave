@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
 from pymongo import MongoClient
-from database.mongo_connection import col_sessoes
+from app.data.db import col_sessoes
 
 load_dotenv()
 

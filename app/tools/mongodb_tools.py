@@ -1,7 +1,7 @@
 # memory_tools.py
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
-from memory.memory_mongodb import recuperar_historico
+from app.memory_mongodb import recuperar_historico
 
 
 @tool
