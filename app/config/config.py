@@ -14,14 +14,19 @@ load_dotenv(BASE_DIR / ".env")          # o único load_dotenv() do projeto
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY   = os.getenv("GROQ_API_KEY")
+QDRANT_API_KEY  = os.getenv("QDRANT_API_KEY")
+
 SQL_URL   = os.getenv("SQL_URL")
 MONGODB_URI    = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 
 OBRIGATORIAS = {
     "GEMINI_API_KEY": GEMINI_API_KEY,
     "GROQ_API_KEY":   GROQ_API_KEY,
+    "QDRANT_API_KEY":  QDRANT_API_KEY,
     "SQL_URL":   SQL_URL,
     "MONGODB_URI":    MONGODB_URI,
+    "QDRANT_URL": QDRANT_URL
 }
 
 
