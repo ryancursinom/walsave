@@ -1,85 +1,13 @@
 # Imports
-import os
 import operator
-from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_groq import ChatGroq
-from langchain.agents import create_agent
 from langgraph.checkpoint.memory import MemorySaver # -> Substitui a função que tínhamos criado para histórico com sessões, porque faz isso automaticamente
 from langchain_core.messages import RemoveMessage
+from langchain_core.runnables import RunnableConfig
 from typing import Annotated
 from langgraph.graph import StateGraph, MessagesState, END
-from prompts.prompts import PROMPTS
-from app.tools.financial_tools import TOOLS
-from app.tools.faq_tools import faq_retriever
 from app.guardrail import guardrail_entrada, guardrail_saida, anonimizar_entrada
 from app.memory_mongodb import iniciar_sessao, salvar_mensagem, encerrar_sessao
-from app.tools.mongodb_tools import TOOLS_MEMORIA
-
-# Carregando variáveis de ambiente
-load_dotenv()
-
-# Instância modelo do Gemini (gemini-2.5-flash)
-llm_gemini = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    temperature=0.7,
-    top_p=0.95,
-    google_api_key=os.getenv("GEMINI_API_KEY")
-)
-
-llm_groq = ChatGroq(
-   model="openai/gpt-oss-120b",
-   temperature=0.7,
-   api_key=os.getenv("GROQ_API_KEY")
-)
-
-llm_especialista = llm_gemini.with_fallbacks([llm_groq])
-
-llm_rapido = ChatGroq(
-   model="llama-3.3-70b-versatile",
-   temperature=0.0,
-   api_key=os.getenv("GROQ_API_KEY")
-)
-
-# =================================================================================
-# CRIAÇÃO DO AGENTE DE IA, PASSANDO PARÂMETROS DE CONFIG DE FORMA BEM MAIS SIMPLES
-# =================================================================================
-router_memory = MemorySaver()
-
-router_app = create_agent(
-   model=llm_rapido,
-   system_prompt=PROMPTS["router"],
-   checkpointer=router_memory,
-   tools=TOOLS_MEMORIA
-)
-
-financeiro_app = create_agent(
-   model=llm_especialista,
-   system_prompt=PROMPTS["financial"],
-   tools=[
-       *TOOLS,
-       *TOOLS_MEMORIA
-    ]
-)
-
-agenda_app = create_agent(
-   model=llm_especialista,
-   system_prompt=PROMPTS["schedule"]
-)
-
-faq_app = create_agent(
-    model=llm_rapido,
-    system_prompt=PROMPTS["faq"],
-    tools=[
-        faq_retriever,
-        *TOOLS_MEMORIA
-    ]
-)
-
-orquestrador_app = create_agent(
-   model=llm_rapido,
-   system_prompt=PROMPTS["orchestrator"]
-)
+from app.config.agents import router_app, financeiro_app, faq_app, orquestrador_app
 
 # ==============================================================================
 # ESTADO
@@ -123,8 +51,8 @@ def no_guardrail_entrada(estado: Estado) -> dict:
         "rota": "roteador",
     }
 
-def no_roteador(estado: Estado) -> dict:
-    saida = router_app.invoke({"messages": list(estado["messages"])})
+def no_roteador(estado: Estado,  config: RunnableConfig) -> dict:
+    saida = router_app.invoke({"messages": list(estado["messages"])}, config=config)
     texto = saida["messages"][-1].text
 
     if "ROUTE=" not in texto:
@@ -234,47 +162,51 @@ fluxo_agentes = grafo.compile(checkpointer=memory)
 # ==============================================================================
 # FLUXO PRINCIPAL
 # ==============================================================================
-def executar_fluxo(pergunta_usuario: str, session_id: str) -> str:
+def executar_fluxo(pergunta_usuario: str, session_id_user: str) -> list:
+    iniciar_sessao(session_id=session_id_user)
+
     estado_inicial = {
         "messages": [{"role": "human", "content": pergunta_usuario}],
         "agentes_chamados": [],
         "rota": "",
         "mapa_pii": {},
-        "session_id": session_id
+        "session_id": session_id_user
     }
 
     estado_final = fluxo_agentes.invoke(
         estado_inicial,
-        config={"configurable": {"thread_id": session_id}},
+        config={"configurable": {"thread_id": session_id_user}},
     )
+    
+    return [
+        estado_final["messages"][-1].text,
+        estado_final["agentes_chamados"]
+    ]
 
-    print(estado_final)
-    return estado_final["messages"][-1].text
+# # PROCESSO DE PERGUNTAS E RESPOSTAS ATÉ QUE O USUÁRIO ENCERRE O CHAT
+# session_id = "12345"
+# iniciar_sessao(session_id=session_id)
 
-# PROCESSO DE PERGUNTAS E RESPOSTAS ATÉ QUE O USUÁRIO ENCERRE O CHAT
-session_id = "12345"
-iniciar_sessao(session_id=session_id)
+# try:
+#     while True:
+#         user_input = input("👥 ")
+#         if user_input.lower() in ('sair', 'end', 'fim', 'tchau', 'bye'):
+#             print("Encerrando a conversa.")
+#             raise SystemExit(0)
+#         try:
+#             resposta = executar_fluxo(
+#                 pergunta_usuario=user_input,
+#                 session_id=session_id
+#             )
 
-try:
-    while True:
-        user_input = input("👥 ")
-        if user_input.lower() in ('sair', 'end', 'fim', 'tchau', 'bye'):
-            print("Encerrando a conversa.")
-            raise SystemExit(0)
-        try:
-            resposta = executar_fluxo(
-                pergunta_usuario=user_input,
-                session_id=session_id
-            )
+#             print(resposta)
+#         except Exception as e:
+#             print("Erro ao consumir a API:", e)
 
-            print(resposta)
-        except Exception as e:
-            print("Erro ao consumir a API:", e)
+# except KeyboardInterrupt:
+#     print("Sessão encerrada pelo usuário!")
 
-except KeyboardInterrupt:
-    print("Sessão encerrada pelo usuário!")
-
-finally:
-    resumo = encerrar_sessao(session_id=session_id)
-    print("=== RESUMO DA SESSÃO ===\n")
-    print(resumo)
+# finally:
+#     resumo = encerrar_sessao(session_id=session_id)
+#     print("=== RESUMO DA SESSÃO ===\n")
+#     print(resumo)

@@ -1,15 +1,7 @@
-import os
-from dotenv import load_dotenv
-import psycopg2
 from typing import Optional, List
 from langchain.tools import tool
 from pydantic import BaseModel, Field
-
-load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL")  
-
-def get_conn():
-    return psycopg2.connect(DATABASE_URL)
+from app.config.database import get_conn
 
 class AddTransactionArgs(BaseModel):
     amount: float = Field(..., description="Valor da transação (use positivo).")

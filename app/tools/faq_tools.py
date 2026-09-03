@@ -1,18 +1,11 @@
-import os
-from pathlib import Path
-from dotenv import load_dotenv
 from langchain.tools import tool
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from app.config.config import FAQ_PDF_PATH, GEMINI_API_KEY
 
-load_dotenv()
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-PDF_PATH = os.getenv("FAQ_PDF_PATH", BASE_DIR / "docs" / "WalSave_Seu_Parceiro_para_Finanças_e_Compromissos.pdf")
-loader = PyPDFLoader(PDF_PATH)
+loader = PyPDFLoader(FAQ_PDF_PATH)
 docs = loader.load()
 
 @tool
@@ -24,7 +17,7 @@ def faq_retriever(question: str) -> str:
 
     embedding = GoogleGenerativeAIEmbeddings(
         model="gemini-embedding-2-preview",
-        google_api_key=os.getenv("GEMINI_API_KEY")
+        google_api_key=GEMINI_API_KEY
     )
 
     latent_space = FAISS.from_documents(chunks,embedding)

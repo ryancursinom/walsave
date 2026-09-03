@@ -27,21 +27,10 @@ Funções
   encerrar_sessao(session_id)                → gera resumo e salva no documento
 """
 
-import os
 import uuid
 from datetime import datetime, timezone
-from dotenv import load_dotenv
-from langchain_groq import ChatGroq
-from pymongo import MongoClient
-from app.data.db import col_sessoes
-
-load_dotenv()
-
-_llm_resumo = ChatGroq(
-    model="llama-3.3-70b-versatile",
-    temperature=0.0,
-    api_key=os.getenv("GROQ_API_KEY"),
-)
+from app.config.database import col_sessoes
+from app.config.agents import llm_rapido
 
 _PROMPT_RESUMO = """\
 Você é um assistente que resume conversas de assessoria financeira e agenda.
@@ -71,9 +60,40 @@ def _formatar_conversa(mensagens: list[dict]) -> str:
 def _gerar_resumo(mensagens: list[dict]) -> str:
     """Chama o LLM para gerar o resumo da sessão."""
     conversa = _formatar_conversa(mensagens)
-    return _llm_resumo.invoke(
+    return llm_rapido.invoke(
         _PROMPT_RESUMO.format(conversa=conversa)
     ).content.strip()
+
+def _doc_id_da_sessao(session_id: str) -> str | None:
+    """
+    Descobre o documento da sessão EM ANDAMENTO deste usuário, ou None.
+
+    Olha primeiro o cache em memória (_sessoes_ativas). Se não achar, procura
+    no MongoDB a sessão mais recente que ainda não foi encerrada — isto é, com
+    resumo vazio.
+
+    Essa segunda tentativa existe porque _sessoes_ativas vive na RAM do
+    processo: um --reload do uvicorn no meio da conversa esvazia o dicionário.
+    Sem ela, iniciar_sessao() criaria um documento novo para a mesma conversa a
+    cada reinício, e encerrar_sessao() não acharia nada para resumir — sem erro
+    nenhum, apenas silêncio.
+    """
+    doc_id = _sessoes_ativas.get(session_id)
+
+    if doc_id:
+        return doc_id
+
+    doc = col_sessoes.find_one(
+        {"session_id": session_id, "resumo": {"$in": ["", None]}},
+        {"_id": 1},
+        sort=[("iniciada_em", -1)],
+    )
+
+    if not doc:
+        return None
+
+    _sessoes_ativas[session_id] = doc["_id"]   # repovoa o cache
+    return doc["_id"]
 
 
 def iniciar_sessao(session_id: str) -> None: # se o session_id for int tem que mudar aqui
@@ -81,6 +101,9 @@ def iniciar_sessao(session_id: str) -> None: # se o session_id for int tem que m
     Cria um novo documento de sessão no MongoDB.
     O doc_id (UUID) é gerado aqui e guardado em _sessoes_ativas.
     """
+    if _doc_id_da_sessao(session_id):        # ← era: if session_id in _sessoes_ativas
+        return
+
     doc_id = str(uuid.uuid4()) # Gera um ID aleatório para o documento
     agora  = _agora()
 
@@ -98,7 +121,9 @@ def iniciar_sessao(session_id: str) -> None: # se o session_id for int tem que m
 
 def salvar_mensagem(session_id: str, role: str, content: str) -> None:
     """ Adiciona uma mensagem ao array de mensagens da sessão ativa. """
-    doc_id = _sessoes_ativas[session_id]
+
+    iniciar_sessao(session_id)
+    doc_id = _doc_id_da_sessao(session_id) 
 
     col_sessoes.update_one(
         {"_id": doc_id},
@@ -107,6 +132,7 @@ def salvar_mensagem(session_id: str, role: str, content: str) -> None:
             "$set":  {"atualizada_em": _agora()},
         },
     )
+
 
 
 def encerrar_sessao(session_id) -> str:
@@ -118,7 +144,7 @@ def encerrar_sessao(session_id) -> str:
       4. Remove sessão do estado interno
     Retorna o resumo gerado ou string vazia se não houver mensagens.
     """
-    doc_id = _sessoes_ativas.get(session_id)
+    doc_id = _doc_id_da_sessao(session_id)
 
     if not doc_id:
         return ""
@@ -153,11 +179,12 @@ def recuperar_historico(session_id: str, busca: str = "", limite: int = 3) -> li
     limite     : máximo de sessões retornadas (mais recentes primeiro)
     """
     # só sessões DESTE usuário que já têm resumo (= já encerradas)
-    filtro = {"session_id": session_id}
+    filtro = {"session_id": session_id, "resumo": {"$nin": ["", None]}}
 
     # se houver termo de busca, filtra resumos que o contenham (case-insensitive)
     if busca:
-        filtro["resumo"] = {"$regex": busca, "$options": "i"}
+        filtro["resumo"]["$regex"]   = busca
+        filtro["resumo"]["$options"] = "i"
 
     docs = (
         col_sessoes
