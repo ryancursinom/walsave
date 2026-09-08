@@ -6,7 +6,7 @@ from langchain_core.runnables import RunnableConfig
 from typing import Annotated
 from langgraph.graph import StateGraph, MessagesState, END
 from app.guardrail import guardrail_entrada, guardrail_saida, anonimizar_entrada
-from app.memory_mongodb import iniciar_sessao, salvar_mensagem, encerrar_sessao
+from app.memory import iniciar_sessao, salvar_mensagem, encerrar_sessao
 from app.config.agents import router_app, financeiro_app, faq_app, orquestrador_app
 
 # ==============================================================================
@@ -17,6 +17,7 @@ class Estado(MessagesState):
     rota: str
     mapa_pii: dict
     session_id: str
+    user_id: str
 
 
 # ==============================================================================
@@ -29,10 +30,21 @@ def no_guardrail_entrada(estado: Estado) -> dict:
     texto_anonimizado, mapa = anonimizar_entrada(human_message.text)
 
     resultado = guardrail_entrada(texto_anonimizado)
-    salvar_mensagem(estado["session_id"], "human", texto_anonimizado)
+    
+    salvar_mensagem(
+        session_id=estado["session_id"],
+        user_id=estado["user_id"],
+        role="human",
+        content=texto_anonimizado
+    )
 
     if resultado["bloqueado"]:
-        salvar_mensagem(estado["session_id"], "assistant", resultado["mensagem"])
+        salvar_mensagem(
+            session_id=estado["session_id"],
+            user_id=estado["user_id"],
+            role="assistant",
+            content=resultado["mensagem"]
+        )
 
         return {
             "messages": [{"role": "assistant", "content": resultado["mensagem"]}],
@@ -56,7 +68,12 @@ def no_roteador(estado: Estado,  config: RunnableConfig) -> dict:
     texto = saida["messages"][-1].text
 
     if "ROUTE=" not in texto:
-        salvar_mensagem(estado["session_id"], "assistant", texto)
+        salvar_mensagem(
+            session_id=estado["session_id"],
+            user_id=estado["user_id"],
+            role="assistant",
+            content=texto
+        )
 
         return {
             "agentes_chamados": ["roteador"],
@@ -97,7 +114,13 @@ def no_guardrail_saida(estado: Estado) -> dict:
 
     resposta_final = guardrail_saida(ultima_resposta.text, estado["mapa_pii"])
 
-    salvar_mensagem(estado["session_id"], "assistant", resposta_final["conteudo"])
+    salvar_mensagem(
+        session_id=estado["session_id"],
+        user_id=estado["user_id"], 
+        role="assistant",
+        content=resposta_final["conteudo"]
+    )
+
     return {
         "agentes_chamados": ["guardrail_saida"],
         "messages": [
@@ -162,21 +185,22 @@ fluxo_agentes = grafo.compile(checkpointer=memory)
 # ==============================================================================
 # FLUXO PRINCIPAL
 # ==============================================================================
-def executar_fluxo(pergunta_usuario: str, session_id_user: str) -> list:
-    iniciar_sessao(session_id=session_id_user)
+def executar_fluxo(pergunta_usuario: str, session_id_user: str, user_id: str) -> list:
+    iniciar_sessao(session_id=session_id_user, user_id=user_id)
 
     estado_inicial = {
         "messages": [{"role": "human", "content": pergunta_usuario}],
         "agentes_chamados": [],
         "rota": "",
         "mapa_pii": {},
-        "session_id": session_id_user
+        "session_id": session_id_user,
+        "user_id": user_id
     }
 
     estado_final = fluxo_agentes.invoke(
         estado_inicial,
-        config={"configurable": {"thread_id": session_id_user}},
-    )
+        config={"configurable": {"thread_id": session_id_user, "user_id": user_id}},
+    ) 
     
     return [
         estado_final["messages"][-1].text,

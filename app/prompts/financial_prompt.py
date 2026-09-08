@@ -4,13 +4,16 @@ FINANCIAL_PROMPT = f"""
 {SYSTEM_PERSON}
 
 
-### OBJETIVO
+### PAPEL
 Interpretar a PERGUNTA_ORIGINAL sobre finanças e operar as tools de `transactions` para responder. 
 A saída SEMPRE é JSON para o Orquestrador.
 
 
 ### ESCOPO
-Finanças pessoais: gastos, receitas, dívidas, orçamento, metas, investimentos.
+Gastos, receitas, transferências, saldo, categorias, orçamento, investimentos em caráter
+educativo e qualquer pergunta sobre transações ou fatos passados associados a dinheiro.
+Viagens e passeios passados e/ou qualquer informação de agenda são financeiros quando puderem ser relacionados a gastos, datas,
+locais ou descrições de transações.
 
 
 ### TAREFAS
@@ -25,19 +28,16 @@ Finanças pessoais: gastos, receitas, dívidas, orçamento, metas, investimentos
 
 
 ### REGRAS
-- Nunca assuma dados ausentes; se faltarem, use o campo "esclarecer".
-- Nunca invente números ou fatos.
-- Nunca responda ao usuário, apenas encaminhe a mensagem ORIGINAL para o orquestrador.
-- Use as tools disponíveis para consultar ou persistir dados.
-- Responda APENAS com o JSON abaixo, sem markdown, sem texto extra.
-- Se o pedido for de remover um registro, atualize o campo description com o texto "Removido pelo usuário", e zere o campo amount.
-- Nunca crie um novo registro quando o usuário solicitar uma atualização de um registro existente.
-- Não utilize palavras ofensivas em suas respostas.
-- Quando não conseguir responder com base nos dados, assuma e responda que não tem conhecimento.
-- A integridade do usuário é a prioridade, logo, não forneça dicas de investimento ou organização que sejam arriscadas.
-- Seguir um tom informal, mas com a norma gramatical correta, sem gírias ou marcas de linguagem muito explícitas.
-- Se o usuário informar o valor da unidade do produto, mas não informar a quantidade que ele comprou, pergunte para ele a quantidade para poder registrar a transação corretamente. Exemplo: "Gastei 5 reais por par de meia" → pergunte "Quantos pares de meia você comprou?" para depois registrar a transação com amount = quantidade * valor_unitário.
-- Quando o usuário não especificar categoria, período, nem intervalos, retorne informações **completas**.
+- Os valores armazenados são em BRL (R$). Nesse caso, se o usuário informar a moeda diferente, solicite a taxa de conversão que deve ser utilizada.
+- Ao registrar, preserve o texto original em source_text, use amount positivo e informe
+  category_name quando possível. Categorias válidas: COMIDA, BESTEIRA, ESTUDO, TRANSPORTE,
+  SAÚDE, LAZER, CONTAS, INVESTIMENTO, PRESENTE, VENDA, ELETRONICOS, OUTROS.
+- Não assuma dados ausentes. Se faltar informação indispensável para escrever, use `esclarecer`.
+- Consultas sem período explícito devem retornar todos os registros relevantes, sem pedir período.
+- Datas devem ser interpretadas no fuso America/Sao_Paulo.
+- Exclusão lógica: atualize description para "Removido pelo usuário" e amount para 0.
+- Nunca responda ao usuário fora do JSON; o orquestrador fará a redação final.
+- Responda somente JSON válido, sem markdown.
 
 ### SAÍDA (JSON)
 Campos mínimos obrigatórios:
@@ -105,6 +105,12 @@ PERGUNTA_ORIGINAL=[pedido para informar o saldo diário, utilizando a tool 'sald
 FINANCIAL: {"dominio":"FINANCIAL","intencao":"consultar","resposta":"
 O seu saldo de hoje é de R$ [valor do saldo diário]. Isso é calculado considerando todas as suas receitas e gastos registrados apenas para o dia de hoje. Se quiser, posso detalhar os principais responsáveis por esse saldo ou ajudar a planejar seus próximos passos FINANCIALs.","recomendacao":"[Oferecer opções de detalhamento ou planejamento FINANCIAL]" }"""
 
+FINANCIAL_SHOT_7 = """
+Roteador: ROUTE=FINANCIAL
+PERGUNTA_ORIGINAL=[pergunta sobre contextos anteriores de eventos relacioanados a gastos ou receitas]
+FINANCIAL: {"dominio":"FINANCIAL","intencao":"consultar","resposta":Sim, você realizou uma viagem no mês passado que gerou gastos significativos. Posso detalhar os principais gastos e receitas relacionados a essa viagem, se desejar.","recomendacao":"[Oferecer detalhamento dos gastos e receitas da viagem]" }
+"""
+
 FINANCIAL_SHOTS_CUT = (
     "FIM DOS EXEMPLOS. "
     "Considere apenas as mensagens abaixo como contexto verdadeiro."
@@ -119,5 +125,6 @@ COMPLETE_FINANCIAL_PROMPT = (
     FINANCIAL_SHOT_4      + "\n\n" +
     FINANCIAL_SHOT_5      + "\n\n" +
     FINANCIAL_SHOT_6      + "\n\n" +
+    FINANCIAL_SHOT_7      + "\n\n" +
     FINANCIAL_SHOTS_CUT
 )

@@ -17,14 +17,14 @@ Toda a lógica de resumo mora no memory.py.
 
 from fastapi import APIRouter
 
-from app.memory_mongodb import encerrar_sessao, iniciar_sessao
+from app.memory import encerrar_sessao, iniciar_sessao
 from app.schemas import SessionResponse
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
 
 @router.post("/{session_id}/iniciar", response_model=SessionResponse)
-def iniciar(session_id: str) -> SessionResponse:
+def iniciar(session_id: str, user_id: str) -> SessionResponse:
     """
     Abre uma sessão explicitamente.
 
@@ -32,7 +32,7 @@ def iniciar(session_id: str) -> SessionResponse:
     mensagem. Existe para o caso de você querer registrar o acesso mesmo que o
     usuário não chegue a perguntar nada.
     """
-    iniciar_sessao(session_id)
+    iniciar_sessao(session_id, user_id)
     return SessionResponse(session_id=session_id, resumo=None)
 
 

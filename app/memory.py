@@ -31,13 +31,17 @@ import uuid
 from datetime import datetime, timezone
 from app.config.database import col_sessoes
 from app.config.agents import llm_rapido
+from qdrant_client import models
+from app.config.database import qdrant, gerar_embedding, COLLECTION_MEMORIA, garantir_colecoes_qdrant
 
 _PROMPT_RESUMO = """\
 Você é um assistente que resume conversas de assessoria financeira e agenda.
 Gere um resumo conciso em 2-4 frases capturando:
 - O que o usuário fez (transações registradas, eventos agendados)
 - O que o usuário perguntou
-- Informações relevantes mencionadas (valores, datas, categorias)
+- Informações relevantes mencionadas (valores, datas, categorias, locais...)
+
+**OBS:** Tudo que for considerado detalhe deve ser mencionado no resumo, mesmo que não seja uma ação ou pergunta do usuário. Isso porque garante uma busca baseada semântica mais precisa no futuro.
 
 Responda APENAS com o resumo, sem introdução ou explicação.
 
@@ -96,7 +100,7 @@ def _doc_id_da_sessao(session_id: str) -> str | None:
     return doc["_id"]
 
 
-def iniciar_sessao(session_id: str) -> None: # se o session_id for int tem que mudar aqui
+def iniciar_sessao(session_id: str, user_id: str = "usuario_teste") -> None:
     """
     Cria um novo documento de sessão no MongoDB.
     O doc_id (UUID) é gerado aqui e guardado em _sessoes_ativas.
@@ -110,6 +114,7 @@ def iniciar_sessao(session_id: str) -> None: # se o session_id for int tem que m
     col_sessoes.insert_one({
         "_id":           doc_id,
         "session_id":    session_id,
+        "user_id":       user_id,
         "iniciada_em":   agora,
         "atualizada_em": agora,
         "resumo":        "",
@@ -119,10 +124,10 @@ def iniciar_sessao(session_id: str) -> None: # se o session_id for int tem que m
     _sessoes_ativas[session_id] = doc_id
 
 
-def salvar_mensagem(session_id: str, role: str, content: str) -> None:
+def salvar_mensagem(session_id: str, user_id: str, role: str, content: str) -> None:
     """ Adiciona uma mensagem ao array de mensagens da sessão ativa. """
 
-    iniciar_sessao(session_id)
+    iniciar_sessao(session_id=session_id, user_id=user_id)
     doc_id = _doc_id_da_sessao(session_id) 
 
     col_sessoes.update_one(
@@ -135,15 +140,7 @@ def salvar_mensagem(session_id: str, role: str, content: str) -> None:
 
 
 
-def encerrar_sessao(session_id) -> str:
-    """
-    Encerra a sessão ativa:
-      1. Carrega mensagens do MongoDB
-      2. Gera resumo via LLM
-      3. Atualiza documento com resumo e atualizada_em
-      4. Remove sessão do estado interno
-    Retorna o resumo gerado ou string vazia se não houver mensagens.
-    """
+def encerrar_sessao(session_id: str) -> str:
     doc_id = _doc_id_da_sessao(session_id)
 
     if not doc_id:
@@ -162,34 +159,64 @@ def encerrar_sessao(session_id) -> str:
         {"$set": {"resumo": resumo, "atualizada_em": _agora()}},
     )
 
+    # Salva o embedding do resumo no Qdrant para busca semântica futura.
+    # O filtro de multitenancy usa user_id (estável entre sessões), não session_id.
+    user_id = doc.get("user_id", "usuario_teste")
+    garantir_colecoes_qdrant()
+    vetor = gerar_embedding(resumo)
+    qdrant.upsert(
+        collection_name=COLLECTION_MEMORIA,
+        points=[
+            models.PointStruct(
+                id=doc_id,
+                vector=vetor,
+                payload={
+                    "user_id":     user_id,
+                    "session_id":  session_id,
+                    "resumo":      resumo,
+                    "iniciada_em": doc["iniciada_em"].isoformat(),
+                },
+            )
+        ],
+    )
+
     _sessoes_ativas.pop(session_id)
 
     return resumo
 
-def recuperar_historico(session_id: str, busca: str = "", limite: int = 3) -> list[dict]:
-    """
-    Recupera resumos de sessões ANTERIORES (já encerradas) de um usuário.
-
-    Estratégia: olha primeiro os resumos. Se houver termo de busca, filtra
-    por ele; senão, traz as sessões mais recentes. As mensagens completas
-    NÃO vêm aqui — para isso use recuperar_mensagens(doc_id).
-
-    session_id : identifica o usuário (hoje fixo, depois dinâmico)
-    busca      : termo opcional para filtrar resumos relevantes
-    limite     : máximo de sessões retornadas (mais recentes primeiro)
-    """
-    # só sessões DESTE usuário que já têm resumo (= já encerradas)
-    filtro = {"session_id": session_id, "resumo": {"$nin": ["", None]}}
-
-    # se houver termo de busca, filtra resumos que o contenham (case-insensitive)
+def recuperar_historico(user_id: str, busca: str = "", limite: int = 3) -> list[dict]:
     if busca:
-        filtro["resumo"]["$regex"]   = busca
-        filtro["resumo"]["$options"] = "i"
+        garantir_colecoes_qdrant()
+        vetor = gerar_embedding(busca)
+        resultados = qdrant.query_points(
+            collection_name=COLLECTION_MEMORIA,
+            query=vetor,
+            query_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="user_id",
+                        match=models.MatchValue(value=user_id),
+                    )
+                ]
+            ),
+            limit=limite,
+        )
 
+        if resultados.points:
+            return [
+                {
+                    "doc_id":      ponto.id,
+                    "iniciada_em": ponto.payload.get("iniciada_em", ""),
+                    "resumo":      ponto.payload["resumo"],
+                }
+                for ponto in resultados.points
+            ]
+
+    filtro = {"user_id": user_id, "resumo": {"$nin": ["", None]}}
     docs = (
         col_sessoes
-        .find(filtro, {"resumo": 1, "iniciada_em": 1})  # projeção: sem mensagens
-        .sort("iniciada_em", -1)                          # mais recentes primeiro
+        .find(filtro, {"resumo": 1, "iniciada_em": 1})
+        .sort("iniciada_em", -1)
         .limit(limite)
     )
 

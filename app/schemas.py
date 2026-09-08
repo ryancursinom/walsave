@@ -3,8 +3,22 @@ from pydantic import BaseModel, Field
 
 class ChatRequest(BaseModel):
     """O que o navegador envia no POST /chat."""
-    session_id: str = Field(..., examples=["2nnugu14bu343gb3"])
-    pergunta:   str = Field(..., min_length=1, examples=["gastei 50 reais no mercado"])
+
+    user_id:    str = Field(
+        default="usuario_teste",
+        description="Identificador único do usuário. É o que permite a memória de longo prazo funcionar",
+        examples=["usuario_teste"])
+    
+    session_id: str = Field(
+        ...,
+        description="Identificador da sessão do usuário. Pode ser um UUID ou outro identificador único.",
+        examples=["2nnugu14bu343gb3"])
+    
+    pergunta:   str = Field(
+        ..., 
+        min_length=1,
+        description="Pergunta ou mensagem do usuário para o assistente.", 
+        examples=["gastei 50 reais no mercado"])
 
 
 class ChatResponse(BaseModel):

@@ -1,7 +1,7 @@
-# memory_tools.py
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
-from app.memory_mongodb import recuperar_historico
+
+from app.memory import recuperar_historico
 
 
 @tool
@@ -10,21 +10,34 @@ def buscar_historico(busca: str, config: RunnableConfig) -> str:
 
     Use SOMENTE quando a resposta depende de algo dito numa conversa passada
     — preferências, decisões ou planos que o usuário mencionou antes.
+    - pedido de informações sobre contextos anteriores.
     NÃO use para dados que estão no banco (gastos, saldos, eventos): para isso
-    já existem as tools de consulta específicas como query_transactions, total_balance, daily_balance.
+    já existem as tools de consulta específicas como query_transactions,
+    total_balance, daily_balance.
 
     Args:
         busca: assunto a procurar nos resumos das conversas anteriores.
     """
-    session_id = config["configurable"]["thread_id"]   # injetado pelo main.py
-    historico  = recuperar_historico(session_id, busca=busca, limite=3)
+    configuravel = (config or {}).get("configurable", {})
+    user_id      = configuravel.get("user_id") or configuravel.get("thread_id")
+
+    if not user_id:
+        return "Não foi possível identificar o usuário para buscar o histórico."
+
+    historico = recuperar_historico(user_id, busca=busca, limite=3)
 
     if not historico:
         return "Nenhuma conversa anterior relevante encontrada."
 
-    return "\n\n".join(
-        f"[{h['iniciada_em']:%d/%m/%Y}] {h['resumo']}" for h in historico
-    )
+    linhas = []
+    for h in historico:
+        data = h["iniciada_em"]
+        if hasattr(data, "strftime"):
+            data_fmt = data.strftime("%d/%m/%Y")
+        else:
+            data_fmt = str(data)[:10]
+        linhas.append(f"[{data_fmt}] {h['resumo']}")
+    return "\n\n".join(linhas)
 
 
 TOOLS_MEMORIA = [buscar_historico]

@@ -19,6 +19,18 @@ COLLECTION_MEMORIA = "memoria_resumos"
 COLLECTION_FAQ     = "faq_chunks"
 EMBEDDING_DIM      = 768
 
+def garantir_colecoes_qdrant() -> None:
+    """Cria as coleções do sistema quando ainda não existem."""
+    for nome in (COLLECTION_MEMORIA, COLLECTION_FAQ):
+        if not qdrant.collection_exists(nome):
+            qdrant.create_collection(
+                collection_name=nome,
+                vectors_config=models.VectorParams(
+                    size=EMBEDDING_DIM,
+                    distance=models.Distance.COSINE,
+                ),
+            )
+
 _embeddings = GoogleGenerativeAIEmbeddings(
     model="gemini-embedding-2-preview",
     google_api_key=GEMINI_API_KEY,

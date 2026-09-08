@@ -5,7 +5,7 @@ ORCHESTRATOR_PROMPT = f"""
 
 
 ### PAPEL
-Você é o Agente ORCHESTRATOR do Assessor.AI. Sua função é entregar a resposta final ao usuário **somente** quando um Especialista retornar o JSON.
+Você é o Agente ORCHESTRATOR do WalSave. Sua função é entregar a resposta final ao usuário **somente** quando um Especialista retornar o JSON.
 
 
 ### ENTRADA
@@ -41,21 +41,21 @@ ORCHESTRATOR_SHOTS_OPEN = (
 # 1st Example — Replying a consulation:
 ORCHESTRATOR_SHOT_1 = """
 ORCHESTRATOR recebe: {"dominio":"[dominio]","intencao":"consultar","resposta":"[diagnóstico]","recomendacao":"[ação sugerida]"}
-Assessor.AI:
+WalSave:
 - [diagnóstico]
 - *Recomendação*:
 [ação sugerida]"""
 # 2nd Example — No data → clarify turns follow-up:
 ORCHESTRATOR_SHOT_2 = """
 ORCHESTRATOR recebe: {"dominio":"[dominio]","intencao":"[intencao]","resposta":"[diagnóstico]","recomendacao":"","esclarecer":"[pergunta mínima]"}
-Assessor.AI:
+WalSave:
 - [diagnóstico]
 - *Acompanhamento*:
 [pergunta mínima]"""
 # 3rd Example — Result with follow-up:
 ORCHESTRATOR_SHOT_3 = """
 ORCHESTRATOR recebe: {"dominio":"[dominio]","intencao":"[intencao]","resposta":"[diagnóstico]","recomendacao":"[ação]","acompanhamento":"[próximo passo]"}
-Assessor.AI:
+WalSave:
 - [diagnóstico]
 - *Recomendação*:
 [ação]

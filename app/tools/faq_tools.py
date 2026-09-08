@@ -1,29 +1,25 @@
 from langchain.tools import tool
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from app.config.config import FAQ_PDF_PATH, GEMINI_API_KEY
-from app.config.database import qdrant, gerar_embedding, COLLECTION_FAQ
+from app.config.database import qdrant, gerar_embedding, COLLECTION_FAQ, garantir_colecoes_qdrant
 
-loader = PyPDFLoader(FAQ_PDF_PATH)
-docs = loader.load()
 
 @tool
 def faq_retriever(question: str) -> str:
-   """Busca no FAQ oficial os trechos mais relevantes para responder a pergunta."""
-   vetor = gerar_embedding(question)
-   
-   resultados = qdrant.query_points(
+    """Busca no FAQ oficial os trechos mais relevantes para responder a pergunta."""
+    garantir_colecoes_qdrant()
+    vetor = gerar_embedding(question)
+
+    resultados = qdrant.query_points(
         collection_name=COLLECTION_FAQ,
         query=vetor,
         limit=6,
     )
-   
-   
-   if not resultados.points:
+
+    if not resultados.points:
         return "Nenhum trecho relevante encontrado no FAQ."
-   
-   return "\n\n".join(
-        ponto.payload["page_content"] for ponto in resultados.points
-    )
+
+    trechos = [
+        ponto.payload.get("page_content", "")
+        for ponto in resultados.points
+        if ponto.payload and ponto.payload.get("page_content")
+    ]
+    return "\n\n".join(trechos) if trechos else "Nenhum trecho relevante encontrado no FAQ."
