@@ -8,6 +8,7 @@ from langgraph.graph import StateGraph, MessagesState, END
 from app.guardrail import guardrail_entrada, guardrail_saida, anonimizar_entrada
 from app.memory import iniciar_sessao, salvar_mensagem, encerrar_sessao
 from app.config.agents import router_app, financeiro_app, faq_app, orquestrador_app
+from app.config.database import CURRENT_USER_ID
 
 # ==============================================================================
 # ESTADO
@@ -186,6 +187,8 @@ fluxo_agentes = grafo.compile(checkpointer=memory)
 # FLUXO PRINCIPAL
 # ==============================================================================
 def executar_fluxo(pergunta_usuario: str, session_id_user: str, user_id: str) -> list:
+    if not user_id or not user_id.strip():
+        raise ValueError("user_id é obrigatório para executar o chat")
     iniciar_sessao(session_id=session_id_user, user_id=user_id)
 
     estado_inicial = {
@@ -197,10 +200,14 @@ def executar_fluxo(pergunta_usuario: str, session_id_user: str, user_id: str) ->
         "user_id": user_id
     }
 
-    estado_final = fluxo_agentes.invoke(
-        estado_inicial,
-        config={"configurable": {"thread_id": session_id_user, "user_id": user_id}},
-    ) 
+    token = CURRENT_USER_ID.set(user_id)
+    try:
+        estado_final = fluxo_agentes.invoke(
+            estado_inicial,
+            config={"configurable": {"thread_id": session_id_user, "user_id": user_id}},
+        )
+    finally:
+        CURRENT_USER_ID.reset(token)
     
     return [
         estado_final["messages"][-1].text,

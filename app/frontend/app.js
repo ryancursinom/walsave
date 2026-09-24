@@ -4,6 +4,8 @@
 // Ajuste para a URL onde o FastAPI está rodando.
 const API_BASE = "http://localhost:8000";
 const CHAT_ENDPOINT = `${API_BASE}/chat`;
+// Identificador do usuário da aplicação atual; a API não cria usuário implícito.
+const USER_ID = "usuario_teste";
 
 // ============================================================
 // Elementos
@@ -213,6 +215,7 @@ composer.addEventListener("submit", async (evento) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        user_id: USER_ID,
         pergunta: pergunta,
         session_id: sessionId,
       }),

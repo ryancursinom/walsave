@@ -384,7 +384,7 @@ def add_transaction(
     description: Optional[str] = None,
     payment_method: Optional[str] = None,
 ) -> dict:
-    """Insere uma transação financeira no banco de dados Postgres."""
+    """Insere uma transação; sem user_id no contexto, a operação é recusada."""
     conn = get_conn()
     cur = conn.cursor()
     try:

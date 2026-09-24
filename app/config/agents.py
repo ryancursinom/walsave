@@ -5,6 +5,7 @@ from app.prompts.prompts import PROMPTS
 from app.tools.financial_tools import TOOLS
 from app.tools.mongodb_tools import TOOLS_MEMORIA
 from app.tools.faq_tools import faq_retriever
+from app.tools.profile_tools import TOOLS_PERFIL
 
 router_memory = MemorySaver()
 
@@ -20,7 +21,8 @@ financeiro_app = create_agent(
    system_prompt=PROMPTS["financial"],
    tools=[
        *TOOLS,
-       *TOOLS_MEMORIA
+       *TOOLS_MEMORIA,
+       *TOOLS_PERFIL
     ]
 )
 
