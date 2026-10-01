@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "assessor-financeiro": {
+      "command": "C:\\Program Files\\Python314\\python.exe",
+      "args": [
+        "C:\\Users\\ryanmoraes-ieg\\OneDrive - Instituto J&F\\2° ANO\\MATÉRIAS TECH\\Inteligência Artificial\\walsave\\app\\mcp_server.py"
+      ]
+    }
+  } }

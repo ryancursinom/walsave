@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from app.config.database import get_conn
 
 class AddTransactionArgs(BaseModel):
-    amount: float = Field(..., description="Valor da transação (use positivo).")
+    amount: float = Field(..., description="Valor da transação (sempre positivo).")
     source_text: str = Field(..., description="Texto original do usuário.")
     occurred_at: Optional[str] = Field(
         default=None,
@@ -529,9 +529,7 @@ def search_transactions(
             pass
 
 @tool("saldo_total")
-def saldo_total(
-    
-) -> dict:
+def saldo_total() -> dict:
     """
     Retorna o saldo total do usuário (INCOME - EXPENSES) em todo o histórico de transações.
     **OBS: Transações do tipo TRANSFER não são consideradas no cálculo do saldo, pois não se sabe se são entradas ou saídas de dinheiro**.
