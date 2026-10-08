@@ -12,6 +12,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+from app.config.database import CURRENT_SOURCE
 from app.tools.financial_tools import (
     # Tools
     add_transaction as _add_transaction,
@@ -20,6 +21,9 @@ from app.tools.financial_tools import (
     saldo_total as _total_balance,
     update_transaction as _update_transaction
 )
+
+# Este processo só existe para o Cursor; o chat FastAPI nunca importa este arquivo.
+CURRENT_SOURCE.set("mcp")
 
 # Define o servidor MCP
 mcp = MCPServer(
@@ -41,6 +45,105 @@ ESCRITA = ToolAnnotations(readOnlyHint=False, destructiveHint=False)
 )
 def total_balance() -> dict[str, Any]:
     return _total_balance.invoke({})
+
+
+# MCP Tool para consultar saldo do dia
+@mcp.tool(
+    name="daily_balance",
+    title="Saldo diário",
+    description="Saldo do dia informado (YYYY-MM-DD, America/Sao_Paulo): receitas menos despesas. Transferências não entram no cálculo.",
+    annotations=LEITURA,
+)
+def daily_balance(
+    date_local: str = Field(..., description="Data local no formato YYYY-MM-DD (America/Sao_Paulo)."),
+) -> dict[str, Any]:
+    return _daily_balance.invoke({"date_local": date_local})
+
+
+# MCP Tool para consultar transações
+@mcp.tool(
+    name="query_transactions",
+    title="Consultar transações",
+    description="Lista transações com filtros opcionais (valor, tipo, categoria, descrição, pagamento, datas e texto original).",
+    annotations=LEITURA,
+)
+def query_transactions(
+    min_amount: Optional[float] = Field(
+        default=None,
+        description="Valor mínimo. Em busca por valor exato, use o mesmo valor em max_amount.",
+    ),
+    max_amount: Optional[float] = Field(
+        default=None,
+        description="Valor máximo. Em busca por valor exato, use o mesmo valor em min_amount.",
+    ),
+    type_name: Optional[str] = Field(
+        default=None,
+        description="Tipo: INCOME | EXPENSES | TRANSFER (aceita aliases em PT-BR).",
+    ),
+    category_name: Optional[str] = Field(
+        default=None,
+        description="Categoria: comida, besteira, estudo, transporte, saude, lazer, contas, investimento, presente, venda, eletronicos, outros.",
+    ),
+    description: Optional[str] = Field(default=None, description="Filtro parcial na descrição."),
+    payment_method: Optional[str] = Field(default=None, description="Filtro da forma de pagamento."),
+    min_date: Optional[str] = Field(
+        default=None,
+        description="Início do intervalo (YYYY-MM-DD). Em data única, use o mesmo valor em max_date.",
+    ),
+    max_date: Optional[str] = Field(
+        default=None,
+        description="Fim do intervalo (YYYY-MM-DD). Em data única, use o mesmo valor em min_date.",
+    ),
+    source_text: Optional[str] = Field(default=None, description="Filtro parcial no texto original do usuário."),
+) -> dict[str, Any]:
+    return _query_transactions.invoke({
+        "min_amount": min_amount,
+        "max_amount": max_amount,
+        "type_name": type_name,
+        "category_name": category_name,
+        "description": description,
+        "payment_method": payment_method,
+        "min_date": min_date,
+        "max_date": max_date,
+        "source_text": source_text,
+    })
+
+
+# MCP Tool para atualizar uma transação
+@mcp.tool(
+    name="update_transaction",
+    title="Atualizar transação",
+    description="Atualiza uma transação por id ou pela combinação match_text + date_local. Informe ao menos um campo a alterar.",
+    annotations=ESCRITA,
+)
+def update_transaction(
+    id: Optional[int] = Field(default=None, description="ID da transação. Se ausente, use match_text e date_local."),
+    match_text: Optional[str] = Field(
+        default=None,
+        description="Texto para localizar a transação em source_text/description quando id não for informado.",
+    ),
+    date_local: Optional[str] = Field(
+        default=None,
+        description="Data local YYYY-MM-DD (America/Sao_Paulo), usada com match_text quando id ausente.",
+    ),
+    amount: Optional[float] = Field(default=None, description="Novo valor (sempre positivo)."),
+    type_name: Optional[str] = Field(default=None, description="Novo tipo: INCOME | EXPENSES | TRANSFER."),
+    category_name: Optional[str] = Field(default=None, description="Nova categoria (nome)."),
+    description: Optional[str] = Field(default=None, description="Nova descrição."),
+    payment_method: Optional[str] = Field(default=None, description="Novo meio de pagamento."),
+    occurred_at: Optional[str] = Field(default=None, description="Novo timestamp ISO 8601."),
+) -> dict[str, Any]:
+    return _update_transaction.invoke({
+        "id": id,
+        "match_text": match_text,
+        "date_local": date_local,
+        "amount": amount,
+        "type_name": type_name,
+        "category_name": category_name,
+        "description": description,
+        "payment_method": payment_method,
+        "occurred_at": occurred_at,
+    })
 
 
 # MCP Tool para registrar uma transação

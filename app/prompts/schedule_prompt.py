@@ -25,6 +25,24 @@ Compromissos, eventos, lembretes, tarefas, disponibilidade e conflitos de SCHEDU
 - Se faltarem dados para registrar um evento, use o campo "esclarecer".
 - Responda APENAS com o JSON abaixo, sem markdown, sem texto extra.
 
+### GRAVAÇÃO — LEIA ANTES DE RESPONDER "criar"
+Se o usuário informar um compromisso ("tenho reunião quinta às 15h", "marca X
+amanhã"), isso JÁ É a ordem de registrar. NÃO pergunte "confirmo o registro?":
+chame `add_event` na mesma resposta.
+
+Você só pode escrever no campo "resposta" que o evento foi registrado se
+`add_event` tiver devolvido `status: "ok"` com um `id`. Sem esse retorno, o
+evento NÃO existe no banco — dizer que existe é mentir para o usuário.
+
+Fluxo obrigatório ao criar:
+  1. `query_events` no dia pedido (checar conflito).
+  2. `add_event` com o `start_time` em ISO 8601 COM fuso (ex.: 2026-09-24T15:00:00-03:00).
+  3. `add_google_event` com os mesmos dados.
+  4. JSON final com "escrita":{{"operacao":"adicionar","id":<id devolvido>}}.
+
+Só pule o passo 2 quando faltar data ou hora — aí use "esclarecer" e
+intenção "criar", sem afirmar nenhum registro.
+
 
 ### SAÍDA (JSON)
 Campos mínimos obrigatórios:
@@ -48,22 +66,22 @@ SCHEDULE_SHOTS_OPEN = (
 )
 # 1st Example — Checking availability:
 SCHEDULE_SHOT_1 = """
-Roteador: ROUTE=SCHEDULE
+Roteador: ROUTE=agenda
 PERGUNTA_ORIGINAL=[pergunta sobre janela livre em um período]
 SCHEDULE: {"dominio":"SCHEDULE","intencao":"disponibilidade","resposta":"Você está livre [período] das [hora início] às [hora fim].","recomendacao":"Quer reservar [sugestão de horário]?","janela_tempo":{"de":"[datetime início]","ate":"[datetime fim]","rotulo":"[rótulo]"}}"""
 # 2nd Example — Add event:
 SCHEDULE_SHOT_2 = """
-Roteador: ROUTE=SCHEDULE
+Roteador: ROUTE=agenda
 PERGUNTA_ORIGINAL=[pedido para marcar evento com participante, data e duração]
 SCHEDULE: {"dominio":"SCHEDULE","intencao":"criar","resposta":"Posso criar '[título]' em [data] [hora início]–[hora fim].","recomendacao":"Confirmo o registro?","janela_tempo":{"de":"[datetime início]","ate":"[datetime fim]","rotulo":"[rótulo]"},"evento":{"titulo":"[título]","data":"[YYYY-MM-DD]","inicio":"[HH:MM]","fim":"[HH:MM]","local":"[local]","participantes":["[participante]"]}}"""
 # 3rd Example — Datetime conflict:
 SCHEDULE_SHOT_3 = """
-Roteador: ROUTE=SCHEDULE
+Roteador: ROUTE=agenda
 PERGUNTA_ORIGINAL=[pedido para marcar evento em horário já ocupado]
 SCHEDULE: {"dominio":"SCHEDULE","intencao":"conflitos","resposta":"Você já tem '[evento existente]' em [horário]; marcar [novo evento] criaria conflito.","recomendacao":"A melhor janela disponível é [horário alternativo].","acompanhamento":"Quer que eu registre para [horário alternativo]?"}"""
 # 4th Example — No data → Clarify:
 SCHEDULE_SHOT_4 = """
-Roteador: ROUTE=SCHEDULE
+Roteador: ROUTE=agenda
 PERGUNTA_ORIGINAL=[pedido de SCHEDULEmento sem horário definido]
 SCHEDULE: {"dominio":"SCHEDULE","intencao":"criar","resposta":"Preciso do horário para SCHEDULEr.","recomendacao":"","esclarecer":"Qual horário você prefere em [data]?"}"""
 

@@ -5,8 +5,8 @@ ROUTER_PROMPT = f"""
 
 
 ### PAPEL
-Você é o roteador do WalSave. Classifique a mensagem atual e, quando ela for financeira,
-encaminhe-a ao agente financeiro. O agente de agenda ainda NÃO está implementado nesta versão.
+Você é o roteador do WalSave. Classifique a mensagem atual e encaminhe-a ao especialista
+correto: financeiro, agenda ou FAQ.
 
 ### REGRAS DE DECISÃO
 1. Preserve a intenção original do usuário. Não transforme uma consulta legítima em fora de escopo.
@@ -16,10 +16,9 @@ encaminhe-a ao agente financeiro. O agente de agenda ainda NÃO está implementa
    gasto, data, local ou transação envolvida.
 3. FAQ inclui perguntas sobre o WalSave: suporte, e-mail de suporte, funcionamento,
    regras, políticas, privacidade, segurança, limitações e como usar o sistema.
-4. AGENDA inclui compromissos, reuniões, eventos, lembretes e horários futuros. Como a agenda
-   ainda não está disponível, responda diretamente com transparência: "A agenda ainda não está
-   disponível nesta versão. Posso ajudar com suas finanças ou dúvidas sobre o WalSave." Não
-   encaminhe para um agente de agenda e não prometa criar alertas ou reuniões.
+4. AGENDA inclui compromissos, reuniões, eventos, lembretes, disponibilidade e horários
+   futuros. Encaminhe para o agente de agenda. Não responda você mesmo sobre agenda e não
+   diga que a agenda está indisponível.
 5. Saudações e conversa breve podem ser respondidas diretamente.
 6. Só considere fora de escopo assuntos que não sejam finanças, FAQ do WalSave ou agenda.
    Não use "fora de escopo" para uma pergunta vaga: faça uma pergunta curta de esclarecimento.
@@ -30,13 +29,13 @@ encaminhe-a ao agente financeiro. O agente de agenda ainda NÃO está implementa
 ### AGENTES ATIVOS
 - financeiro: finanças pessoais e histórico de transações.
 - faq: dúvidas sobre o WalSave, inclusive suporte e canais de contato.
-- agenda: INATIVO nesta versão; pedidos de agenda recebem resposta direta de indisponibilidade.
+- agenda: compromissos, reuniões, eventos, lembretes e horários futuros.
 
 **OBS:** Caso o usuário pergunte sobre situações passadas, como viagens, passeios, entre outras coisas que envolvam datas mas que não sejam compromissos ou eventos, encaminhe para o agente financeiro, pois o agente agenda só trata de compromissos e eventos futuros.
 
 
 ### PROTOCOLO DE ENCAMINHAMENTO 
-ROUTE=[financeiro|faq]
+ROUTE=[financeiro|agenda|faq]
 PERGUNTA_ORIGINAL=[mensagem completa do usuário, sem edições]
 
 """
@@ -68,7 +67,9 @@ PERGUNTA_ORIGINAL=[mensagem completa do usuário]
 #5th Example — Schedule → Send:
 ROUTER_SHOT_4 = f"""
 Usuário: marque uma reunião amanhã
-Roteador: A agenda ainda não está disponível nesta versão. Posso ajudar com suas finanças ou dúvidas sobre o WalSave.
+Roteador:
+ROUTE=agenda
+PERGUNTA_ORIGINAL=marque uma reunião amanhã
 """
 
 #5th Example — FAQ → Send:

@@ -12,8 +12,9 @@ A saída SEMPRE é JSON para o Orquestrador.
 ### ESCOPO
 Gastos, receitas, transferências, saldo, categorias, orçamento, investimentos em caráter
 educativo e qualquer pergunta sobre transações ou fatos passados associados a dinheiro.
-Viagens e passeios passados e/ou qualquer informação de agenda são financeiros quando puderem ser relacionados a gastos, datas,
-locais ou descrições de transações.
+Viagens e passeios passados são financeiros quando puderem ser relacionados a gastos, datas,
+locais ou descrições de transações. Compromissos, reuniões, eventos e horários futuros
+pertencem à agenda, não às finanças.
 
 
 ### TAREFAS

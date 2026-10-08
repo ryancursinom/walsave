@@ -6,6 +6,7 @@ from app.tools.financial_tools import TOOLS
 from app.tools.mongodb_tools import TOOLS_MEMORIA
 from app.tools.faq_tools import faq_retriever
 from app.tools.profile_tools import TOOLS_PERFIL
+from app.tools.calendar_tools import TOOLS_AGENDA
 
 router_memory = MemorySaver()
 
@@ -28,7 +29,12 @@ financeiro_app = create_agent(
 
 agenda_app = create_agent(
    model=llm_especialista,
-   system_prompt=PROMPTS["schedule"]
+   system_prompt=PROMPTS["schedule"],
+   tools=[
+       *TOOLS_MEMORIA,
+       *TOOLS_PERFIL,
+         *TOOLS_AGENDA
+    ]
 )
 
 faq_app = create_agent(

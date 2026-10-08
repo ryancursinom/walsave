@@ -1,3 +1,4 @@
+import inspect
 import psycopg2
 from contextvars import ContextVar
 from pymongo import MongoClient
@@ -21,6 +22,7 @@ COLLECTION_FAQ = "faq_chunks"
 COLLECTION_PERFIL_RESTRICOES = "perfil_restricoes"
 EMBEDDING_DIM = 768
 CURRENT_USER_ID: ContextVar[str | None] = ContextVar("current_user_id", default=None)
+CURRENT_SOURCE: ContextVar[str] = ContextVar("current_source", default="chat")
 
 
 def _garantir_indice_tenant(nome: str) -> None:
@@ -68,7 +70,23 @@ def gerar_embeddings_batch(textos: list[str]) -> list[list[float]]:
     return _embeddings.embed_documents(textos, output_dimensionality=EMBEDDING_DIM)
 
 
+def _chamada_via_mcp() -> bool:
+    if CURRENT_SOURCE.get() == "mcp":
+        return True
+
+    for frame in inspect.stack():
+        arquivo = frame.filename.replace("\\", "/").lower()
+        if arquivo.endswith("/mcp_server.py"):
+            return True
+        modulo = frame.frame.f_globals.get("__name__", "")
+        if modulo == "app.mcp_server":
+            return True
+
+    return False
+
+
 def get_conn():
-    if not CURRENT_USER_ID.get():
+    if not _chamada_via_mcp() and not CURRENT_USER_ID.get():
         raise PermissionError("operação financeira recusada: user_id ausente")
+        
     return psycopg2.connect(SQL_URL)

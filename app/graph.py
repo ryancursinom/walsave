@@ -7,7 +7,7 @@ from typing import Annotated
 from langgraph.graph import StateGraph, MessagesState, END
 from app.guardrail import guardrail_entrada, guardrail_saida, anonimizar_entrada
 from app.memory import iniciar_sessao, salvar_mensagem, encerrar_sessao
-from app.config.agents import router_app, financeiro_app, faq_app, orquestrador_app
+from app.config.agents import router_app, financeiro_app, faq_app, orquestrador_app, agenda_app
 from app.config.database import CURRENT_USER_ID
 
 # ==============================================================================
@@ -82,10 +82,12 @@ def no_roteador(estado: Estado,  config: RunnableConfig) -> dict:
             "messages":         [{"role": "assistant", "content": texto}],
         }
 
+    aliases = {"schedule": "agenda", "financial": "financeiro"}
     rota = "fim"
     for linha in texto.splitlines():
         if linha.startswith("ROUTE="):
-            rota = linha.split("=", 1)[1].strip()
+            rota_bruta = linha.split("=", 1)[1].strip().lower()
+            rota = aliases.get(rota_bruta, rota_bruta)
             break
 
     return {
@@ -148,6 +150,7 @@ grafo = StateGraph(Estado)
 grafo.add_node("guardrail_entrada", no_guardrail_entrada)
 grafo.add_node("roteador",     no_roteador)
 grafo.add_node("financeiro", financeiro_app)
+grafo.add_node("agenda", agenda_app)
 grafo.add_node("faq", faq_app)
 grafo.add_node("orquestrador", no_orquestrador)
 grafo.add_node("guardrail_saida", no_guardrail_saida)
@@ -168,15 +171,17 @@ grafo.add_conditional_edges(
     decidir_especialista,
     {
         "financeiro": "financeiro",
+        "agenda":     "agenda",
         "faq":        "faq",
         "fim":        END,       # resposta direta: sem especialista nem orquestrador
     },
 )
 
-grafo.add_edge("financeiro","orquestrador")
+grafo.add_edge("financeiro", "orquestrador")
+grafo.add_edge("agenda", "orquestrador")
 grafo.add_edge("orquestrador", "guardrail_saida")
 grafo.add_edge("guardrail_saida", END)
-grafo.add_edge("faq",          END)   # FAQ bypassa o orquestrador
+grafo.add_edge("faq", END)   # FAQ bypassa o orquestrador
 
 # Memória centralizada no grafo — persiste o Estado inteiro entre turns
 memory = MemorySaver()
