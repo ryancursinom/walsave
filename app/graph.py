@@ -8,7 +8,10 @@ from langgraph.graph import StateGraph, MessagesState, END
 from app.guardrail import guardrail_entrada, guardrail_saida, anonimizar_entrada
 from app.memory import iniciar_sessao, salvar_mensagem, encerrar_sessao
 from app.config.agents import router_app, financeiro_app, faq_app, orquestrador_app, agenda_app
+from app.juiz import _coleta, _julgar_jev, _publicar, FRASE_SEGURA
 from app.config.database import CURRENT_USER_ID
+from app.memory import salvar_mensagem
+from app.observabilidade import abrir_turno, fechar_turno, status_do_estado
 
 # ==============================================================================
 # ESTADO
@@ -25,7 +28,7 @@ class Estado(MessagesState):
 # NÓS
 # ==============================================================================
 
-def no_guardrail_entrada(estado: Estado) -> dict:
+def no_guardrail_entrada(estado: Estado, config: RunnableConfig) -> dict:
     human_message = list(estado["messages"])[-1]
 
     texto_anonimizado, mapa = anonimizar_entrada(human_message.text)
@@ -96,7 +99,7 @@ def no_roteador(estado: Estado,  config: RunnableConfig) -> dict:
         # Histórico limpo: o especialista vai ler só a conversa real
     }
 
-def no_orquestrador(estado: Estado) -> dict:
+def no_orquestrador(estado: Estado, config: RunnableConfig) -> dict:
     ultima_especialista = ""
     for mensagem in reversed(estado["messages"]):
         if mensagem.type == "ai" and mensagem.content:
@@ -112,7 +115,19 @@ def no_orquestrador(estado: Estado) -> dict:
         "messages":        [{"role": "assistant", "content": saida["messages"][-1].text}],
     }
 
-def no_guardrail_saida(estado: Estado) -> dict:
+def no_juiz(estado: dict) -> dict:
+    pergunta, resposta, evidencia = _coleta(estado)
+
+    if not resposta:
+        return {"agentes_chamados": ["juiz:sem_resposta"]}
+    try:
+        return _julgar_jev(pergunta, resposta, evidencia)
+    
+    except Exception as exc:
+        print(f"[juiz] erro {exc}")
+        return _publicar(FRASE_SEGURA, "erro", resposta)
+
+def no_guardrail_saida(estado: Estado, config: RunnableConfig) -> dict:
     ultima_resposta = list(estado["messages"])[-1] 
 
     resposta_final = guardrail_saida(ultima_resposta.text, estado["mapa_pii"])
@@ -153,6 +168,7 @@ grafo.add_node("financeiro", financeiro_app)
 grafo.add_node("agenda", agenda_app)
 grafo.add_node("faq", faq_app)
 grafo.add_node("orquestrador", no_orquestrador)
+grafo.add_node("juiz", no_juiz)
 grafo.add_node("guardrail_saida", no_guardrail_saida)
 
 grafo.set_entry_point("guardrail_entrada")
@@ -180,8 +196,9 @@ grafo.add_conditional_edges(
 grafo.add_edge("financeiro", "orquestrador")
 grafo.add_edge("agenda", "orquestrador")
 grafo.add_edge("orquestrador", "guardrail_saida")
-grafo.add_edge("guardrail_saida", END)
-grafo.add_edge("faq", END)   # FAQ bypassa o orquestrador
+grafo.add_edge("guardrail_saida", "juiz")
+grafo.add_edge("faq", "juiz")
+grafo.add_edge("juiz", END)
 
 # Memória centralizada no grafo — persiste o Estado inteiro entre turns
 memory = MemorySaver()
@@ -206,12 +223,19 @@ def executar_fluxo(pergunta_usuario: str, session_id_user: str, user_id: str) ->
     }
 
     token = CURRENT_USER_ID.set(user_id)
+    turno_id = abrir_turno()
+    status = 'erro'
+    rota = ''
+
     try:
+
         estado_final = fluxo_agentes.invoke(
             estado_inicial,
             config={"configurable": {"thread_id": session_id_user, "user_id": user_id}},
         )
+
     finally:
+        fechar_turno(turno_id, session_id_user, rota, status)
         CURRENT_USER_ID.reset(token)
     
     return [
