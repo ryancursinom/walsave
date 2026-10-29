@@ -29,7 +29,7 @@ Como foi encaixado sem mudar a lógica de negócio das tools:
 
 1. `executar_fluxo` cria um `TurnoTransacional` e o publica no `ContextVar CURRENT_TURNO` (mesmo mecanismo já usado por `CURRENT_USER_ID`).
 2. `get_conn()` passa a verificar esse contexto. Dentro de um turno do chat, ela devolve um `_ConexaoDoTurno` sobre a conexão única do turno; fora de um turno (servidor MCP, scripts), devolve `psycopg2.connect` como antes.
-3. Em `_ConexaoDoTurno`, cada abertura cria um `SAVEPOINT`. O `commit()` chamado pela tool vira `RELEASE SAVEPOINT`, o `rollback()` vira `ROLLBACK TO SAVEPOINT` e o `close()` libera a conexão para a próxima tool. **As tools continuam chamando `commit()`, `rollback()` e `close()` exatamente como antes** — o SQL, as validações e os retornos não mudaram, e `financial_tools.py` e `calendar_tools.py` não foram editados.
+3. Em `_ConexaoDoTurno`, cada abertura cria um `SAVEPOINT`. O `commit()` chamado pela tool vira `RELEASE SAVEPOINT`, o `rollback()` vira `ROLLBACK TO SAVEPOINT` e o `close()` libera a conexão para a próxima tool. **As tools continuam chamando `commit()`, `rollback()` e `close()` exatamente como antes** — o SQL, as validações e os retornos não mudaram, e `financial_tools.py` e `calendar_tools.py` não foram editados - SABOR COMMIT.
 4. O nó `juiz` passa a devolver `jev_aprovado` (`True` só quando `choice == "apoiada"` e `noul ≥ 0,70`). `executar_fluxo` chama `turno.finalizar(confirmar=jev_aprovado)`.
 5. Se o turno teve escrita e ela não ficou, a resposta ao usuário é trocada por uma frase que diz isso: *"Não consegui confirmar essa operação com segurança, por isso nada foi salvo. Pode repetir o pedido com os detalhes?"*. O estado do LangGraph recebe a mesma frase, para o histórico do próximo turno não afirmar um registro que não existe.
 
@@ -142,34 +142,6 @@ O grupo também decidiu que o roteador passa a ser um JEV usando os mesmos crit�
 
 - **Outbox transacional:** gravar, na mesma transação, um evento a ser processado depois. Serviria para levar efeitos externos, como um futuro `add_google_event`, para depois do `COMMIT` com garantia de entrega. Hoje não há efeito externo a proteger.
 - **Saga orquestrada:** usar estados e compensações entre Postgres, Mongo, Qdrant e APIs. É necessária apenas se uma operação passar a atravessar vários armazenamentos de forma inseparável.
-
-### 2.6 Comparação com números
-
-Câmbio usado: **US$ 1 ≈ R$ 5,04** (PTAX de venda em torno de R$ 5,04 na segunda quinzena de outubro de 2026; por exemplo, R$ 5,0377 em 23/10/2026, conforme a imprensa que reporta a PTAX). Confira o valor do dia no portal do Banco Central antes de citar. A versão anterior deste arquivo usava R$ 5,3420, valor que não foi confirmado e foi substituído.
-
-Os tokens foram estimados pelo tamanho real dos textos do código (cerca de 4 caracteres por token em português): `ROUTER_PROMPT` tem 3.019 caracteres, o prompt completo do roteador tem 3.966, os critérios de rota 745 e as regras do juiz 620. Os preços vêm de `app/observabilidade.py` (gpt-oss-120b na Groq: US$ 0,15 / 0,60 por milhão de tokens) e da TypeSafe (JEV: US$ 0,042 por milhão de tokens de entrada, saída sem custo).
-
-| Solução | Latência adicional por turno com escrita | Custo de infraestrutura | Complexidade (o que muda no código) | Garante a invariante? |
-|---|---|---|---|---|
-| **Transação do turno (adotada)** | 1 conexão por turno no lugar de 1 por tool (de 5 a 50 ms poupados por tool extra); +2 comandos curtos por tool (`SAVEPOINT`/`RELEASE`, ~1 ms cada no mesmo host); `COMMIT` após o juiz | R$ 0 (usa o Postgres existente) | 3 arquivos, +316/−24 linhas (medido com `git diff --numstat`); **0 linhas nas tools** | Sim, nas 3 tools |
-| Redis como preparação | +1 ida ao Redis por tool (<1 ms local; 20–80 ms se o Redis gerenciado estiver fora do Brasil) + gravação SQL depois do juiz | Redis Cloud Essentials a partir de ~US$ 5–7/mês para 250 MB (≈ R$ 25–35); Pro com mínimo de US$ 200/mês (≈ R$ 1.008); R$ 0 em Docker local | reescrever as 3 tools + cliente Redis + passo de efetivação + mescla nas leituras | Sim, se a efetivação for transacional e idempotente |
-| Compensação | +1 conexão e +1 `DELETE`/`UPDATE` por escrita recusada; +1 `SELECT` (before-image) por `update_transaction` | R$ 0 | inverso para cada tool + registro do que desfazer | Não, se a compensação falhar |
-| Interceptação antes da tool | +1 chamada JEV por tool call de escrita (~R$ 0,0001 cada) + interrupção/retomada | R$ 0 de infraestrutura | middleware em 2 agentes, checkpointer, retomada no fluxo | Não, sozinha |
-| Status pendente | +1 `UPDATE` de confirmação por turno aprovado | R$ 0 | migração + filtro em todas as consultas | Sim, com risco na confirmação |
-
-**Custo de chamadas de modelo afetado pela decisão (estimativa por turno):**
-
-| Chamada | Tokens estimados | US$ por turno | R$ a cada 10.000 turnos |
-|---|---|---|---|
-| Roteador LLM antigo (gpt-oss-120b) | ~1.300 de entrada + ~150 de saída (inclui raciocínio) | ~0,000285 | ~R$ 14,36 |
-| **Roteador JEV (novo)** | ~1.200 de entrada | ~0,000050 | **~R$ 2,54** |
-| Juiz final (já existia) | ~2.000 de entrada (evidência limitada a 6.000 caracteres) | ~0,000084 | ~R$ 4,23 |
-
-O roteador LLM antigo também acumula o histórico inteiro no próprio checkpointer (`router_memory`), então o custo real dele cresce com a conversa. O roteador JEV envia no máximo as 6 últimas falas.
-
-Estes números são estimativas a partir do código e das tabelas de preço. Os valores medidos devem vir do monitor da Etapa 6 e do painel da TypeSafe, com o sistema rodando.
-
----
 
 ## 3. O efeito nas métricas do SRE
 
@@ -293,9 +265,7 @@ Para provocar a recusa: peça um gasto em dólares (como o caso da aula) e verif
 
 ### Criados
 
-- `GUIA_IMPLEMENTACAO.md` — guia em PT-BR para uma IA (ou pessoa) reproduzir e estender a estrutura no WalSave.
 - `decisao_tecnica.md` — este relatório.
-- `RELATORIO_ALTERACOES.md` — descrição, arquivo por arquivo, de cada classe, método, constante e função alterada.
 
 ### Modificados
 
