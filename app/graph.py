@@ -8,8 +8,11 @@ from langgraph.graph import StateGraph, MessagesState, END
 from app.guardrail import guardrail_entrada, guardrail_saida, anonimizar_entrada
 from app.memory import iniciar_sessao, salvar_mensagem, encerrar_sessao
 from app.config.agents import router_app, financeiro_app, faq_app, orquestrador_app, agenda_app
-from app.juiz import _coleta, _julgar_jev, _publicar, FRASE_SEGURA
-from app.config.database import CURRENT_USER_ID
+from app.juiz import (
+    _coleta, _julgar_jev, _julgar_rota, _historico, _publicar,
+    FRASE_SEGURA, FRASE_ESCRITA_DESFEITA,
+)
+from app.config.database import CURRENT_USER_ID, CURRENT_TURNO, TurnoTransacional
 from app.memory import salvar_mensagem
 from app.observabilidade import abrir_turno, fechar_turno, status_do_estado
 
@@ -22,6 +25,7 @@ class Estado(MessagesState):
     mapa_pii: dict
     session_id: str
     user_id: str
+    jev_aprovado: bool  # só o veredito do JEV final autoriza o COMMIT do turno
 
 
 # ==============================================================================
@@ -67,7 +71,33 @@ def no_guardrail_entrada(estado: Estado, config: RunnableConfig) -> dict:
         "rota": "roteador",
     }
 
-def no_roteador(estado: Estado,  config: RunnableConfig) -> dict:
+def no_roteador(estado: Estado, config: RunnableConfig) -> dict:
+    decisao = _julgar_rota(list(estado["messages"])[-1].text, _historico(estado))
+
+    if decisao is None:
+        return _rotear_por_llm(estado, config)
+
+    if decisao["rota"] != "fim":
+        return {
+            "agentes_chamados": [f"roteador:jev:{decisao['motivo']}", decisao["rota"]],
+            "rota":             decisao["rota"],
+        }
+
+    salvar_mensagem(
+        session_id=estado["session_id"],
+        user_id=estado["user_id"],
+        role="assistant",
+        content=decisao["resposta"]
+    )
+
+    return {
+        "agentes_chamados": [f"roteador:jev:{decisao['motivo']}"],
+        "rota":             "fim",
+        "messages":         [{"role": "assistant", "content": decisao["resposta"]}],
+    }
+
+def _rotear_por_llm(estado: Estado, config: RunnableConfig) -> dict:
+    """Contingência: roteador LLM original, usado só quando o JEV não dá veredito."""
     saida = router_app.invoke({"messages": list(estado["messages"])}, config=config)
     texto = saida["messages"][-1].text
 
@@ -122,8 +152,9 @@ def no_juiz(estado: dict) -> dict:
         return {"agentes_chamados": ["juiz:sem_resposta"]}
     try:
         return _julgar_jev(pergunta, resposta, evidencia)
-    
+
     except Exception as exc:
+        # Timeout ou resposta inválida do JEV: frase segura e ROLLBACK do turno.
         print(f"[juiz] erro {exc}")
         return _publicar(FRASE_SEGURA, "erro", resposta)
 
@@ -131,13 +162,6 @@ def no_guardrail_saida(estado: Estado, config: RunnableConfig) -> dict:
     ultima_resposta = list(estado["messages"])[-1] 
 
     resposta_final = guardrail_saida(ultima_resposta.text, estado["mapa_pii"])
-
-    salvar_mensagem(
-        session_id=estado["session_id"],
-        user_id=estado["user_id"], 
-        role="assistant",
-        content=resposta_final["conteudo"]
-    )
 
     return {
         "agentes_chamados": ["guardrail_saida"],
@@ -211,6 +235,7 @@ fluxo_agentes = grafo.compile(checkpointer=memory)
 def executar_fluxo(pergunta_usuario: str, session_id_user: str, user_id: str) -> list:
     if not user_id or not user_id.strip():
         raise ValueError("user_id é obrigatório para executar o chat")
+    
     iniciar_sessao(session_id=session_id_user, user_id=user_id)
 
     estado_inicial = {
@@ -219,27 +244,58 @@ def executar_fluxo(pergunta_usuario: str, session_id_user: str, user_id: str) ->
         "rota": "",
         "mapa_pii": {},
         "session_id": session_id_user,
-        "user_id": user_id
+        "user_id": user_id,
+        "jev_aprovado": False,
     }
+    config = {"configurable": {"thread_id": session_id_user, "user_id": user_id}}
 
     token = CURRENT_USER_ID.set(user_id)
+    turno = TurnoTransacional()
+    token_turno = CURRENT_TURNO.set(turno)
     turno_id = abrir_turno()
     status = 'erro'
     rota = ''
 
     try:
+        # agentes_chamados acumula entre turnos; o status olha só os deste turno.
+        anteriores = fluxo_agentes.get_state(config).values.get("agentes_chamados") or []
 
-        estado_final = fluxo_agentes.invoke(
-            estado_inicial,
-            config={"configurable": {"thread_id": session_id_user, "user_id": user_id}},
-        )
+        estado_final = fluxo_agentes.invoke(estado_inicial, config=config)
+
+        # Fronteira da escrita: COMMIT só com o JEV final aprovando.
+        efetivada = turno.finalizar(confirmar=bool(estado_final.get("jev_aprovado")))
+        ultima = estado_final["messages"][-1]
+        resposta = ultima.text
+
+        if turno.escritas and not efetivada:
+            resposta = FRASE_ESCRITA_DESFEITA
+            try:
+                fluxo_agentes.update_state(config, {"messages": [
+                    RemoveMessage(id=ultima.id),
+                    {"role": "assistant", "content": resposta},
+                ]})
+            except Exception as exc:
+                print(f"[transacao] estado do grafo não atualizado: {exc}")
+
+        if estado_final.get("rota") in ("financeiro", "agenda"):
+            salvar_mensagem(
+                session_id=session_id_user,
+                user_id=user_id,
+                role="assistant",
+                content=resposta
+            )
+
+        rota = estado_final.get("rota", "")
+        status = status_do_estado({"agentes_chamados": estado_final["agentes_chamados"][len(anteriores):]})
 
     finally:
+        turno.finalizar(confirmar=False)  # exceção no grafo: ROLLBACK; sem efeito se já finalizado
         fechar_turno(turno_id, session_id_user, rota, status)
+        CURRENT_TURNO.reset(token_turno)
         CURRENT_USER_ID.reset(token)
-    
+
     return [
-        estado_final["messages"][-1].text,
+        resposta,
         estado_final["agentes_chamados"]
     ]
 

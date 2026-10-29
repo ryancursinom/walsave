@@ -1,4 +1,5 @@
 import inspect
+import threading
 import psycopg2
 from contextvars import ContextVar
 from pymongo import MongoClient
@@ -85,8 +86,130 @@ def _chamada_via_mcp() -> bool:
     return False
 
 
+IDLE_TIMEOUT_TURNO = "120s"
+ESPERA_CONEXAO_S = 60
+
+class _ConexaoDoTurno:
+    """O que a tool enxerga como conexão dentro de um turno."""
+
+    def __init__(self, turno: "TurnoTransacional", savepoint: str):
+        self._turno = turno
+        self._savepoint = savepoint
+        self._aberto = True
+        self._executar(f"SAVEPOINT {savepoint}")
+
+    def _executar(self, sql: str) -> None:
+        cur = self._turno.conn.cursor()
+        try:
+            cur.execute(sql)
+        finally:
+            cur.close()
+
+    def _desfazer(self) -> None:
+        self._executar(f"ROLLBACK TO SAVEPOINT {self._savepoint}")
+        self._executar(f"RELEASE SAVEPOINT {self._savepoint}")
+
+    def cursor(self, *args, **kwargs):
+        return self._turno.conn.cursor(*args, **kwargs)
+
+    def commit(self) -> None:
+        if not self._aberto:
+            return
+        self._executar(f"RELEASE SAVEPOINT {self._savepoint}")
+        self._aberto = False
+        self._turno.escritas += 1
+
+    def rollback(self) -> None:
+        if not self._aberto:
+            return
+        self._aberto = False
+        self._turno.falhas += 1
+        self._desfazer()
+
+    def close(self) -> None:
+        try:
+            # Tool que sai sem commit: mesmo efeito do close() de uma conexão própria.
+            if self._aberto:
+                self._aberto = False
+                self._desfazer()
+        except Exception:
+            self._turno.falhas += 1
+        finally:
+            if self._turno is not None:
+                turno, self._turno = self._turno, None
+                turno._lock.release()
+
+    def __getattr__(self, nome):
+        return getattr(self._turno.conn, nome)
+
+
+class TurnoTransacional:
+    """Uma conexão por turno, aberta só quando alguma tool pede o Postgres."""
+
+    def __init__(self):
+        self.conn = None
+        self.escritas = 0
+        self.falhas = 0
+        self._seq = 0
+        self._finalizado = False
+        # Tools paralelas do mesmo turno usam a conexão uma de cada vez.
+        self._lock = threading.RLock()
+
+    def conexao(self) -> _ConexaoDoTurno:
+        if self._finalizado:
+            raise RuntimeError("transação do turno já foi finalizada")
+        if not self._lock.acquire(timeout=ESPERA_CONEXAO_S):
+            raise RuntimeError("conexão do turno ocupada por outra tool")
+        try:
+            if self.conn is None:
+                self.conn = psycopg2.connect(SQL_URL)
+                cur = self.conn.cursor()
+                try:
+                    # Se o processo travar com a transação aberta, o Postgres a encerra.
+                    cur.execute(f"SET idle_in_transaction_session_timeout = '{IDLE_TIMEOUT_TURNO}'")
+                finally:
+                    cur.close()
+            self._seq += 1
+            return _ConexaoDoTurno(self, f"tool_{self._seq}")
+        except Exception:
+            self._lock.release()
+            raise
+
+    def finalizar(self, confirmar: bool) -> bool:
+        """Confirma ou desfaz o turno inteiro. Devolve True se a escrita ficou."""
+        if self._finalizado:
+            return False
+        self._finalizado = True
+        if self.conn is None:
+            return False
+        try:
+            if confirmar and self.falhas == 0:
+                try:
+                    self.conn.commit()
+                    return True
+                except Exception as exc:
+                    print(f"[transacao] commit falhou: {exc}")
+            self.conn.rollback()
+            return False
+        except Exception as exc:
+            print(f"[transacao] rollback falhou: {exc}")
+            return False
+        finally:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+
+
+CURRENT_TURNO: ContextVar[TurnoTransacional | None] = ContextVar("current_turno", default=None)
+
+
 def get_conn():
     if not _chamada_via_mcp() and not CURRENT_USER_ID.get():
         raise PermissionError("operação financeira recusada: user_id ausente")
-        
+
+    turno = CURRENT_TURNO.get()
+    if turno is not None:
+        return turno.conexao()
+
     return psycopg2.connect(SQL_URL)
